@@ -242,6 +242,45 @@ def snap_to_grid(img_array, grid_size):
 # ========== Blender 操作符 ==========
 
 
+class PIXELART_OT_flatten_materials(Operator):
+    """一键将所有材质的高光降为0，粗糙度拉满，从物理上防止噪点产生"""
+
+    bl_idname = "pixelart.flatten_materials"
+    bl_label = "一键消除模型反光 (去噪点)"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        count = 0
+        for mat in bpy.data.materials:
+            if mat.use_nodes and mat.node_tree:
+                for node in mat.node_tree.nodes:
+                    if node.type == "BSDF_PRINCIPLED":
+                        # 1. 粗糙度拉满 (变哑光)
+                        if "Roughness" in node.inputs:
+                            node.inputs["Roughness"].default_value = 1.0
+
+                        # 2. 消除高光 (兼容 Blender 4.x 和旧版本)
+                        if "Specular IOR Level" in node.inputs:
+                            node.inputs["Specular IOR Level"].default_value = 0.0
+                        if "Specular" in node.inputs:
+                            node.inputs["Specular"].default_value = 0.0
+
+                        # 3. 消除金属感 (金属会产生强烈的黑白对比噪点)
+                        if "Metallic" in node.inputs:
+                            node.inputs["Metallic"].default_value = 0.0
+
+                        # 4. 消除清漆反光
+                        if "Coat Weight" in node.inputs:
+                            node.inputs["Coat Weight"].default_value = 0.0
+                        if "Clearcoat" in node.inputs:
+                            node.inputs["Clearcoat"].default_value = 0.0
+
+                        count += 1
+
+        self.report({"INFO"}, f"已成功优化 {count} 个材质！(可按 Ctrl+Z 撤销)")
+        return {"FINISHED"}
+
+
 class PIXELART_OT_one_click_process(Operator):
     """一键处理：渲染 + 像素化 + 去噪（仅预览）"""
 
@@ -451,6 +490,7 @@ class PIXELART_OT_open_output_folder(Operator):
 
 
 classes = (
+    PIXELART_OT_flatten_materials,
     PIXELART_OT_one_click_process,
     PIXELART_OT_preview_result,
     PIXELART_OT_export_images,

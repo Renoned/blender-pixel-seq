@@ -101,6 +101,13 @@ class PIXELART_PT_main_panel(Panel):
         row = box.row()
         row.prop(settings, "max_colors")
 
+        # 材质辅助
+        box = layout.box()
+        box.label(text="材质物理去噪", icon="MATERIAL")
+        row = box.row()
+        row.scale_y = 1.2
+        row.operator("pixelart.flatten_materials", icon="SHADING_RENDERED")
+
         # 一键处理
         box = layout.box()
         box.label(text="一键处理", icon="PLAY")
