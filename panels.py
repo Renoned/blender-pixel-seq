@@ -103,10 +103,13 @@ class PIXELART_PT_main_panel(Panel):
 
         # 材质辅助
         box = layout.box()
-        box.label(text="材质物理去噪", icon="MATERIAL")
+        box.label(text="材质物理去噪与二次元化", icon="MATERIAL")
         row = box.row()
         row.scale_y = 1.2
         row.operator("pixelart.flatten_materials", icon="SHADING_RENDERED")
+        row = box.row()
+        row.scale_y = 1.2
+        row.operator("pixelart.convert_toon_shader", icon="SHADING_TEXTURE")
 
         # 一键处理
         box = layout.box()

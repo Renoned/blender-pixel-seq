@@ -281,6 +281,104 @@ class PIXELART_OT_flatten_materials(Operator):
         return {"FINISHED"}
 
 
+class PIXELART_OT_convert_toon_shader(Operator):
+    """将物理材质转换为硬边缘的二次元卡通材质，结合Python算法效果极佳"""
+
+    bl_idname = "pixelart.convert_toon_shader"
+    bl_label = "一键材质转二次元卡通"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        count = 0
+        for mat in bpy.data.materials:
+            if not mat.use_nodes or not mat.node_tree:
+                continue
+
+            nodes = mat.node_tree.nodes
+            links = mat.node_tree.links
+
+            # 寻找 Principled BSDF
+            principled = None
+            for node in nodes:
+                if node.type == "BSDF_PRINCIPLED":
+                    principled = node
+                    break
+
+            if not principled:
+                continue
+
+            # 找到连接到 Base Color 的节点或颜色值
+            base_color_input = principled.inputs.get("Base Color")
+            if not base_color_input:
+                continue
+
+            original_color_link = None
+            original_color_value = base_color_input.default_value
+            if base_color_input.is_linked:
+                original_color_link = base_color_input.links[0].from_socket
+
+            # --- 构建卡通节点树 ---
+            diffuse_node = nodes.new(type="ShaderNodeBsdfDiffuse")
+            diffuse_node.location = (
+                principled.location.x - 600,
+                principled.location.y + 200,
+            )
+            diffuse_node.inputs["Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+
+            shader_to_rgb = nodes.new(type="ShaderNodeShaderToRGB")
+            shader_to_rgb.location = (
+                principled.location.x - 400,
+                principled.location.y + 200,
+            )
+            links.new(diffuse_node.outputs[0], shader_to_rgb.inputs[0])
+
+            color_ramp = nodes.new(type="ShaderNodeValToRGB")
+            color_ramp.location = (
+                principled.location.x - 200,
+                principled.location.y + 200,
+            )
+            color_ramp.color_ramp.interpolation = "CONSTANT"
+            color_ramp.color_ramp.elements[0].position = 0.3
+            color_ramp.color_ramp.elements[0].color = (0.5, 0.5, 0.5, 1.0)
+            color_ramp.color_ramp.elements[1].position = 0.6
+            color_ramp.color_ramp.elements[1].color = (1.0, 1.0, 1.0, 1.0)
+            links.new(shader_to_rgb.outputs[0], color_ramp.inputs[0])
+
+            mix_node = nodes.new(type="ShaderNodeMix")
+            mix_node.data_type = "RGBA"
+            mix_node.blend_type = "MULTIPLY"
+            mix_node.location = (principled.location.x, principled.location.y + 200)
+            mix_node.inputs[0].default_value = 1.0
+
+            if original_color_link:
+                links.new(original_color_link, mix_node.inputs[6])
+            else:
+                mix_node.inputs[6].default_value = original_color_value
+
+            links.new(color_ramp.outputs[0], mix_node.inputs[7])
+
+            emission_node = nodes.new(type="ShaderNodeEmission")
+            emission_node.location = (
+                principled.location.x + 200,
+                principled.location.y + 200,
+            )
+            links.new(mix_node.outputs[2], emission_node.inputs[0])
+
+            output_node = None
+            for node in nodes:
+                if node.type == "OUTPUT_MATERIAL":
+                    output_node = node
+                    break
+
+            if output_node:
+                links.new(emission_node.outputs[0], output_node.inputs[0])
+
+            count += 1
+
+        self.report({"INFO"}, f"成功将 {count} 个材质转化为二次元卡通材质")
+        return {"FINISHED"}
+
+
 class PIXELART_OT_one_click_process(Operator):
     """一键处理：渲染 + 像素化 + 去噪（仅预览）"""
 
@@ -491,6 +589,7 @@ class PIXELART_OT_open_output_folder(Operator):
 
 classes = (
     PIXELART_OT_flatten_materials,
+    PIXELART_OT_convert_toon_shader,
     PIXELART_OT_one_click_process,
     PIXELART_OT_preview_result,
     PIXELART_OT_export_images,
