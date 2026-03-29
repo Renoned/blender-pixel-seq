@@ -673,7 +673,46 @@ class PIXELART_OT_open_output_folder(Operator):
         return {"FINISHED"}
 
 
+
+class PIXELART_OT_setup_pixel_lighting(Operator):
+    """删除杂乱光源，建立单一日光，适合像素画的纯净阴影"""
+    bl_idname = "pixelart.setup_pixel_lighting"
+    bl_label = "一键生成标准像素光照"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        import math
+        
+        # 1. 选中并删除所有现有光源
+        bpy.ops.object.select_all(action='DESELECT')
+        count = 0
+        for obj in context.scene.objects:
+            if obj.type == 'LIGHT':
+                obj.select_set(True)
+                count += 1
+        
+        if count > 0:
+            bpy.ops.object.delete()
+
+        # 2. 添加一个强力且阴影锐利的平行光 (Sun)
+        # 旋转角度设置为经典的等轴测(Isometric)或适合像素画的 45 度角
+        bpy.ops.object.light_add(
+            type='SUN', 
+            align='WORLD', 
+            location=(0, 0, 5), 
+            rotation=(math.radians(45), 0, math.radians(45))
+        )
+        sun = context.active_object
+        sun.data.energy = 2.0  # 保证足够的亮度让 Toon Shader 亮部显现
+        sun.data.angle = 0.0   # 【核心】太阳光角度设为0，产生绝对锐利的硬阴影，防止 Eevee 阴影模糊
+        sun.name = "PixelArt_Sun"
+
+        self.report({"INFO"}, f"已清理 {count} 个杂乱光源，并生成了适合像素画的硬阴影平行光！")
+        return {"FINISHED"}
+
+
 classes = (
+    PIXELART_OT_setup_pixel_lighting,
     PIXELART_OT_flatten_materials,
     PIXELART_OT_convert_toon_shader,
     PIXELART_OT_one_click_process,

@@ -172,9 +172,14 @@ class PIXELART_PT_main_panel(Panel):
         row.operator("pixelart.save_preset", icon="FILE_TICK")
         row.operator("pixelart.load_preset", icon="FILE_REFRESH")
         
-        # 材质辅助
+        # 场景与材质预处理
         box = layout.box()
-        box.label(text="材质物理去噪与二次元化", icon="MATERIAL")
+        box.label(text="场景与材质预处理", icon="SCENE_DATA")
+        
+        row = box.row()
+        row.scale_y = 1.2
+        row.operator("pixelart.setup_pixel_lighting", icon="LIGHT_SUN")
+        
         row = box.row()
         row.scale_y = 1.2
         row.operator("pixelart.flatten_materials", icon="SHADING_RENDERED")
