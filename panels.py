@@ -85,6 +85,7 @@ class PIXELART_OT_save_preset(Operator):
     def execute(self, context):
         settings = context.scene.pixelart_settings
         settings_dict = {
+            "output_path": settings.output_path,
             "disable_antialiasing": settings.disable_antialiasing,
             "render_resolution_x": settings.render_resolution_x,
             "render_resolution_y": settings.render_resolution_y,
@@ -105,6 +106,7 @@ class PIXELART_OT_load_preset(Operator):
         settings = context.scene.pixelart_settings
         saved = load_settings()
         if saved:
+            if "output_path" in saved: settings.output_path = saved["output_path"]
             if "disable_antialiasing" in saved: settings.disable_antialiasing = saved["disable_antialiasing"]
             if "render_resolution_x" in saved: settings.render_resolution_x = saved["render_resolution_x"]
             if "render_resolution_y" in saved: settings.render_resolution_y = saved["render_resolution_y"]
@@ -252,6 +254,7 @@ def register():
         if saved and bpy.context.scene:
             try:
                 settings = bpy.context.scene.pixelart_settings
+                if "output_path" in saved: settings.output_path = saved["output_path"]
                 if "disable_antialiasing" in saved: settings.disable_antialiasing = saved["disable_antialiasing"]
                 if "render_resolution_x" in saved: settings.render_resolution_x = saved["render_resolution_x"]
                 if "render_resolution_y" in saved: settings.render_resolution_y = saved["render_resolution_y"]
