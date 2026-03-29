@@ -354,7 +354,7 @@ class PIXELART_OT_convert_toon_shader(Operator):
     """提取了顶级插件的 Bayer Dithering 技术融合进去"""
 
     bl_idname = "pixelart.convert_toon_shader"
-    bl_label = "一键材质转二次元卡通 (平滑过渡)"
+    bl_label = "一键材质转纯净赛璐璐 (无渐变)"
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
