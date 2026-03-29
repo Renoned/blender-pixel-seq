@@ -169,8 +169,10 @@ def remove_isolated_pixels(img_array):
             most_common_color, max_count = counts.most_common(1)[0]
             current_color = tuple(img_array[y, x, :3])
             
-            # 如果当前颜色在周围出现的次数少于 2 次（孤立点），或者周围某种颜色占据绝对优势（>=5），则替换
-            if counts[current_color] < 2 or max_count >= 5:
+            # 【优化】降低触发条件：
+            # 只有当这个像素周围**一个同色都没有**(绝对孤立)，或者被某种颜色**高度包围**(>=6个)时，才会被同化。
+            # 这样可以保留那些有意设计的 2px 细线和像素画本身的细节。
+            if counts.get(current_color, 0) == 0 or max_count >= 6:
                 result[y, x, :3] = most_common_color
                 
     return result
@@ -416,11 +418,11 @@ class PIXELART_OT_convert_toon_shader(Operator):
             color_ramp.location = (principled.location.x - 300, principled.location.y + 100)
             color_ramp.color_ramp.interpolation = "CONSTANT" 
             color_ramp.color_ramp.elements[0].position = 0.0
-            color_ramp.color_ramp.elements[0].color = (0.4, 0.4, 0.4, 1.0) # 暗部阴影
+            color_ramp.color_ramp.elements[0].color = (0.6, 0.6, 0.6, 1.0) # 暗部阴影 (提高亮度，防止死黑，让它只表现为"衣服的深色")
             
             # 添加中灰层(可选的体积感)
             color_ramp.color_ramp.elements.new(0.35)
-            color_ramp.color_ramp.elements[1].color = (0.7, 0.7, 0.7, 1.0) # 灰部
+            color_ramp.color_ramp.elements[1].color = (0.8, 0.8, 0.8, 1.0) # 灰部 (同步提亮)
             
             color_ramp.color_ramp.elements.new(0.65)
             color_ramp.color_ramp.elements[2].color = (1.0, 1.0, 1.0, 1.0) # 亮部
