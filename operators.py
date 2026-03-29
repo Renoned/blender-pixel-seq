@@ -135,6 +135,58 @@ def remove_antialiasing(img_array, threshold=0.3):
     return result
 
 
+def remove_dark_artifacts(img_array):
+    """移除模型边缘因降采样产生的异常黑色/暗灰色像素斑块"""
+    height, width = img_array.shape[:2]
+    channels = img_array.shape[2] if len(img_array.shape) > 2 else 1
+    if channels < 4:
+        return img_array
+
+    result = img_array.copy()
+
+    for y in range(1, height - 1):
+        for x in range(1, width - 1):
+            if img_array[y, x, 3] == 0:
+                continue
+
+            r, g, b = img_array[y, x, :3]
+            # 极暗像素检测 (亮度 < 40)
+            luminance = 0.299 * r + 0.587 * g + 0.114 * b
+
+            if luminance < 40:
+                # 检查四周是否有透明背景 (意味着它是边缘像素)
+                is_edge = (
+                    img_array[y - 1, x, 3] == 0
+                    or img_array[y + 1, x, 3] == 0
+                    or img_array[y, x - 1, 3] == 0
+                    or img_array[y, x + 1, 3] == 0
+                )
+
+                # 如果是边缘的暗色像素，很可能是 Alpha 预乘的伪影
+                # 用周围最亮的非透明颜色替换它
+                if is_edge:
+                    brightest_color = None
+                    max_lum = -1
+
+                    for dy in [-1, 0, 1]:
+                        for dx in [-1, 0, 1]:
+                            if dy == 0 and dx == 0:
+                                continue
+                            ny, nx = y + dy, x + dx
+
+                            if img_array[ny, nx, 3] > 0:
+                                nr, ng, nb = img_array[ny, nx, :3]
+                                n_lum = 0.299 * nr + 0.587 * ng + 0.114 * nb
+                                if n_lum > max_lum and n_lum > 40:
+                                    max_lum = n_lum
+                                    brightest_color = tuple(img_array[ny, nx, :3])
+
+                    if brightest_color is not None:
+                        result[y, x, :3] = brightest_color
+
+    return result
+
+
 def remove_isolated_pixels(img_array):
     """众数滤波器 (Mode Filter)：移除孤立的噪点像素，使色块更纯净"""
     height, width = img_array.shape[:2]
@@ -182,6 +234,49 @@ def remove_isolated_pixels(img_array):
             # 这样可以保留那些有意设计的 2px 细线和像素画本身的细节。
             if counts.get(current_color, 0) == 0 or max_count >= 6:
                 result[y, x, :3] = most_common_color
+
+    return result
+
+
+def clamp_minimum_brightness(img_array, min_luminance=35):
+    """
+    亮度托底：防止物体本身的暗部颜色（如深棕色皮带）被 KMeans 算法吞噬成纯黑色。
+    它会将所有非全透明非绝对纯黑（非外描边）的像素亮度提升到指定的下限。
+    """
+    height, width = img_array.shape[:2]
+    channels = img_array.shape[2] if len(img_array.shape) > 2 else 1
+    if channels < 3:
+        return img_array
+
+    result = img_array.copy()
+
+    # 将图像转换为浮点进行计算
+    float_img = result.astype(np.float32)
+    r, g, b = float_img[:, :, 0], float_img[:, :, 1], float_img[:, :, 2]
+
+    # 计算当前亮度
+    luminance = 0.299 * r + 0.587 * g + 0.114 * b
+
+    # 找到亮度低于最低阈值的像素（但排除纯黑 0，因为纯黑可能是故意的背景或极暗缝隙）
+    mask = (luminance < min_luminance) & (luminance > 0)
+
+    if channels == 4:
+        # 只处理非透明像素
+        mask = mask & (img_array[:, :, 3] > 0)
+
+    # 提高亮度：用乘数提升 RGB
+    if np.any(mask):
+        # 计算需要提升的倍数，加个极小值防除零
+        multiplier = min_luminance / (luminance[mask] + 0.001)
+
+        # 为了防止偏色，最大放大倍数限制为 3 倍
+        multiplier = np.clip(multiplier, 1.0, 3.0)
+
+        float_img[mask, 0] = np.clip(r[mask] * multiplier, 0, 255)
+        float_img[mask, 1] = np.clip(g[mask] * multiplier, 0, 255)
+        float_img[mask, 2] = np.clip(b[mask] * multiplier, 0, 255)
+
+        result[:, :, :3] = float_img[:, :, :3].astype(np.uint8)
 
     return result
 
@@ -274,7 +369,7 @@ def apply_pixel_outline(img_array, outline_color=(0, 0, 0)):
 
 
 def snap_to_grid(img_array, grid_size):
-    """将像素对齐到网格"""
+    """将像素对齐到网格，同时过滤掉会导致黑边的半透明边缘像素"""
     height, width = img_array.shape[:2]
     channels = img_array.shape[2] if len(img_array.shape) > 2 else 1
 
@@ -296,10 +391,26 @@ def snap_to_grid(img_array, grid_size):
             block = img_array[y_start:y_end, x_start:x_end]
 
             if channels == 4:  # RGBA
-                mask = block[:, :, 3] > 0
+                # 【防黑边核心】过滤掉 Alpha 低于 250 的半透明像素
+                # 这能过滤掉 Eevee 边缘与黑色背景混合产生的脏像素
+                mask = block[:, :, 3] >= 250
                 if mask.any():
+                    # 过滤掉极暗的边缘像素 (防预乘 Alpha 黑边)
+                    valid_pixels = block[mask]
+                    luminance = (
+                        0.299 * valid_pixels[:, 0]
+                        + 0.587 * valid_pixels[:, 1]
+                        + 0.114 * valid_pixels[:, 2]
+                    )
+
+                    # 如果不是所有的像素都是黑色，就过滤掉那些因为 alpha 混合而变得极暗的伪像素
+                    if len(valid_pixels) > 1 and np.max(luminance) > 20:
+                        brightness_mask = luminance > 20
+                        if brightness_mask.any():
+                            valid_pixels = valid_pixels[brightness_mask]
+
                     colors, counts = np.unique(
-                        block[mask][:, :3], axis=0, return_counts=True
+                        valid_pixels[:, :3], axis=0, return_counts=True
                     )
                     dominant_color = colors[counts.argmax()]
                     result[y, x, :3] = dominant_color
@@ -390,14 +501,22 @@ def get_bayer_image():
 
 
 class PIXELART_OT_convert_toon_shader(Operator):
-    """参考 Lucas Roedel 开源像素插件重写的纯净赛璐璐材质转换器"""
+    """保留原始贴图颜色的赛璐璐材质转换器（MULTIPLY 方案）"""
 
     bl_idname = "pixelart.convert_toon_shader"
-    bl_label = "一键材质转纯净赛璐璐 (无渐变)"
+    bl_label = "一键材质转纯净赛璐璐 (保留颜色)"
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
         count = 0
+
+        def collect_upstream(node, keep_nodes):
+            for inp in node.inputs:
+                if inp.is_linked:
+                    src = inp.links[0].from_node
+                    if src not in keep_nodes:
+                        keep_nodes.add(src)
+                        collect_upstream(src, keep_nodes)
 
         for mat in bpy.data.materials:
             if not mat.use_nodes or not mat.node_tree:
@@ -406,114 +525,122 @@ class PIXELART_OT_convert_toon_shader(Operator):
             nodes = mat.node_tree.nodes
             links = mat.node_tree.links
 
-            # 寻找 Principled BSDF
-            principled = None
-            for node in nodes:
-                if node.type == "BSDF_PRINCIPLED":
-                    principled = node
-                    break
-
-            if not principled:
-                continue
-
-            # ========== 【关键修复1】提取原始贴图信息，然后彻底清除旧节点 ==========
-            # 之前的代码从未清理旧节点，每次点击都会叠加新节点，导致旧的 Principled BSDF
-            # 依然连接着输出，它的高光/金属/AO 产生的黑色信号依然会被渲染出来！
-            base_color_input = principled.inputs.get("Base Color")
-
-            # 保存原始贴图节点（如果有的话）
-            original_tex_node = None
-            original_color_value = (0.8, 0.8, 0.8, 1.0)
-            if base_color_input:
-                original_color_value = tuple(base_color_input.default_value)
-                if base_color_input.is_linked:
-                    from_node = base_color_input.links[0].from_node
-                    # 保护贴图节点不被删除
-                    original_tex_node = from_node
-
-            # 找到输出节点（保护它不被删除）
             output_node = None
             for node in nodes:
                 if node.type == "OUTPUT_MATERIAL":
                     output_node = node
                     break
+            if not output_node:
+                continue
 
-            # 删除所有旧节点（除了输出节点和贴图节点）
+            # AI 模型常见：Surface 直接由 Emission 驱动。
+            # 这类材质若强行重建，容易出现“白膜”观感；先走保守路径。
+            surface_input = output_node.inputs.get("Surface")
+            if surface_input and surface_input.is_linked:
+                surface_src = surface_input.links[0].from_node
+                if surface_src.type == "EMISSION":
+                    strength_input = surface_src.inputs.get("Strength")
+                    if strength_input and not strength_input.is_linked:
+                        strength_input.default_value = min(
+                            float(strength_input.default_value), 0.25
+                        )
+                    weight_input = surface_src.inputs.get("Weight")
+                    if weight_input and not weight_input.is_linked:
+                        weight_input.default_value = min(
+                            float(weight_input.default_value), 0.35
+                        )
+                    count += 1
+                    continue
+
+            source_color_node = None
+            source_color_value = (0.8, 0.8, 0.8, 1.0)
+
+            # 优先使用原始贴图节点，避免重复转换时把“旧的处理链”当作新输入，导致白膜叠加
+            for node in nodes:
+                if node.type == "TEX_IMAGE":
+                    source_color_node = node
+                    break
+
+            # 如果没有贴图，再从当前输出链逆向提取颜色源
+            if source_color_node is None:
+                surface_input = output_node.inputs.get("Surface")
+                if surface_input and surface_input.is_linked:
+                    surface_src = surface_input.links[0].from_node
+                    if surface_src.type == "EMISSION":
+                        color_input = surface_src.inputs.get("Color")
+                        if color_input:
+                            if color_input.is_linked:
+                                source_color_node = color_input.links[0].from_node
+                            elif hasattr(color_input, "default_value"):
+                                source_color_value = tuple(color_input.default_value)
+                    elif surface_src.type == "BSDF_PRINCIPLED":
+                        base_input = surface_src.inputs.get("Base Color")
+                        if base_input:
+                            if base_input.is_linked:
+                                source_color_node = base_input.links[0].from_node
+                            elif hasattr(base_input, "default_value"):
+                                source_color_value = tuple(base_input.default_value)
+
+            # ========== 第二步：清理旧节点，只保留输出和颜色源链路 ==========
             nodes_to_keep = {output_node}
-            if original_tex_node:
-                nodes_to_keep.add(original_tex_node)
-                # 如果贴图节点有上游节点（比如 UV Map），也要保留
-                for inp in original_tex_node.inputs:
-                    if inp.is_linked:
-                        nodes_to_keep.add(inp.links[0].from_node)
+            if source_color_node:
+                nodes_to_keep.add(source_color_node)
+                collect_upstream(source_color_node, nodes_to_keep)
 
             for node in list(nodes):
                 if node not in nodes_to_keep:
                     nodes.remove(node)
 
-            # ========== 【关键修复2】参考 Lucas Roedel 开源插件，从零构建纯净节点树 ==========
-            # 核心原理: Principled BSDF -> ShaderToRGB -> ColorRamp(CONSTANT) -> Emission
-            # 这是被 Lucas Roedel、Mezaka 等多位像素艺术大师验证过的标准管线。
-            # 关键: 不再创建额外的 Diffuse，直接把 Principled BSDF 的完整光照信息
-            # 通过 ShaderToRGB 捕获，然后用 ColorRamp 硬截断。
+            # ========== 第三步：构建极简赛璐璐光照（禁用发光叠加，防白膜） ==========
 
-            # 1. 新建一个干净的 Principled BSDF（替代原来那个被污染的）
-            new_bsdf = nodes.new(type="ShaderNodeBsdfPrincipled")
-            new_bsdf.location = (-600, 0)
-            # 强制消除所有产生噪点的属性
-            new_bsdf.inputs["Roughness"].default_value = 1.0
-            if "Specular IOR Level" in new_bsdf.inputs:
-                new_bsdf.inputs["Specular IOR Level"].default_value = 0.0
-            if "Specular" in new_bsdf.inputs:
-                new_bsdf.inputs["Specular"].default_value = 0.0
-            new_bsdf.inputs["Metallic"].default_value = 0.0
-            if "Coat Weight" in new_bsdf.inputs:
-                new_bsdf.inputs["Coat Weight"].default_value = 0.0
+            # 1. 光照捕捉
+            diffuse_bsdf = nodes.new(type="ShaderNodeBsdfDiffuse")
+            diffuse_bsdf.location = (-800, -200)
+            diffuse_bsdf.inputs["Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+            diffuse_bsdf.inputs["Roughness"].default_value = 1.0
 
-            # 连接原始贴图或设置原始颜色
-            if original_tex_node:
-                # 找到贴图节点的 Color 输出
-                tex_color_output = (
-                    original_tex_node.outputs.get("Color")
-                    or original_tex_node.outputs[0]
-                )
-                links.new(tex_color_output, new_bsdf.inputs["Base Color"])
-            else:
-                new_bsdf.inputs["Base Color"].default_value = original_color_value
-
-            # 2. Shader to RGB（捕获完整的光照信息，含贴图颜色）
             shader_to_rgb = nodes.new(type="ShaderNodeShaderToRGB")
-            shader_to_rgb.location = (-300, 0)
-            links.new(new_bsdf.outputs["BSDF"], shader_to_rgb.inputs["Shader"])
+            shader_to_rgb.location = (-500, -200)
+            links.new(diffuse_bsdf.outputs["BSDF"], shader_to_rgb.inputs["Shader"])
 
-            # 3. ColorRamp（CONSTANT 硬截断，这是消灭黑色噪点的核心！）
-            # 参考 Lucas Roedel 的做法：用 CONSTANT 插值把连续的光照
-            # 强制量化成 3 个纯净的色阶。
-            # 【关键区别】这里 ColorRamp 直接处理的是带颜色的光照结果，
-            # 不是灰度值！所以输出就是最终颜色，不需要再做任何乘法或混合！
-            color_ramp = nodes.new(type="ShaderNodeValToRGB")
-            color_ramp.location = (-50, 0)
-            color_ramp.color_ramp.interpolation = "CONSTANT"
-            # 3 个色阶: 暗部从 0.0 开始, 中间从 0.35, 亮部从 0.65
-            color_ramp.color_ramp.elements[0].position = 0.0
-            color_ramp.color_ramp.elements[0].color = (
-                0.65,
-                0.65,
-                0.65,
-                1.0,
-            )  # 暗部不会低于 65% 亮度
-            color_ramp.color_ramp.elements.new(0.35)
-            color_ramp.color_ramp.elements[1].color = (0.85, 0.85, 0.85, 1.0)  # 中间调
-            color_ramp.color_ramp.elements.new(0.65)
-            color_ramp.color_ramp.elements[2].color = (1.0, 1.0, 1.0, 1.0)  # 亮部
-            links.new(shader_to_rgb.outputs["Color"], color_ramp.inputs["Fac"])
+            # 2. 赛璐璐光照阶梯：仅做轻微分层，避免覆盖原贴图
+            color_ramp_light = nodes.new(type="ShaderNodeValToRGB")
+            color_ramp_light.location = (-200, -200)
+            color_ramp_light.color_ramp.interpolation = "CONSTANT"
+            color_ramp_light.color_ramp.elements[0].position = 0.0
+            color_ramp_light.color_ramp.elements[0].color = (0.90, 0.90, 0.90, 1.0)
+            color_ramp_light.color_ramp.elements.new(0.55)
+            color_ramp_light.color_ramp.elements[1].color = (0.97, 0.97, 0.97, 1.0)
+            color_ramp_light.color_ramp.elements.new(0.82)
+            color_ramp_light.color_ramp.elements[2].color = (1.0, 1.0, 1.0, 1.0)
+            links.new(shader_to_rgb.outputs["Color"], color_ramp_light.inputs["Fac"])
 
-            # 4. Emission（自发光输出，防止二次光照污染）
+            # 3. 原始颜色 × 赛璐璐光照 = 被照亮的主体
+            mix_color = nodes.new(type="ShaderNodeMix")
+            mix_color.location = (100, -100)
+            mix_color.data_type = "RGBA"
+            mix_color.blend_type = "MULTIPLY"
+            mix_color.inputs[0].default_value = 1.0
+
+            if source_color_node:
+                src_out = (
+                    source_color_node.outputs.get("Color")
+                    or source_color_node.outputs[0]
+                )
+                links.new(src_out, mix_color.inputs[6])
+            else:
+                mix_color.inputs[6].default_value = source_color_value
+
+            links.new(color_ramp_light.outputs["Color"], mix_color.inputs[7])
+
+            # 4. 输出（不做额外发光叠加，彻底避免白膜）
             emission_node = nodes.new(type="ShaderNodeEmission")
-            emission_node.location = (200, 0)
-            links.new(color_ramp.outputs["Color"], emission_node.inputs["Color"])
+            emission_node.location = (320, -80)
+            links.new(mix_color.outputs[2], emission_node.inputs["Color"])
+            if "Strength" in emission_node.inputs:
+                emission_node.inputs["Strength"].default_value = 0.25
 
-            # 5. 连接到输出
+            # 5. 连接到材质输出
             if output_node:
                 links.new(
                     emission_node.outputs["Emission"], output_node.inputs["Surface"]
@@ -521,7 +648,7 @@ class PIXELART_OT_convert_toon_shader(Operator):
 
             count += 1
 
-        self.report({"INFO"}, f"成功将 {count} 个材质转为纯净赛璐璐 (已清理旧节点)")
+        self.report({"INFO"}, f"成功将 {count} 个材质转为纯净赛璐璐 (保留原始颜色)")
         return {"FINISHED"}
 
 
@@ -606,13 +733,19 @@ class PIXELART_OT_one_click_process(Operator):
 
         for png_file in png_files:
             img = Image.open(png_file)
-            img_array = np.array(img)
 
-            # 对齐到网格
-            snapped = snap_to_grid(img_array, grid_size)
+            # 【重要修复】废弃容易导致发光点丢失的 Mode Filter 数组运算！
+            # 采用原生 NEAREST 重采样，可以绝对保护极亮像素和线条，并真正实现等比例网格化！
+            width, height = img.size
+            new_w = width // grid_size
+            new_h = height // grid_size
 
-            # 保存
-            Image.fromarray(snapped).save(png_file)
+            if new_w > 0 and new_h > 0:
+                # 先缩小，再放大，实现完美的马赛克网格，不损失任何特征像素！
+                # PIL.Image.NEAREST 等价于 0，是最原生的像素暴力采样
+                small_img = img.resize((new_w, new_h), resample=0)
+                pixelated_img = small_img.resize((width, height), resample=0)
+                pixelated_img.save(png_file)
 
         self.report({"INFO"}, f"网格对齐完成: {len(png_files)} 张")
 
@@ -633,14 +766,6 @@ class PIXELART_OT_one_click_process(Operator):
 
         self.report({"INFO"}, f"抗锯齿移除完成: {len(png_files)} 张")
 
-        # ========== 步骤 3.5: 孤立噪点去除 (Despeckle) ==========
-        self.report({"INFO"}, "步骤: 移除孤立噪点...")
-        for png_file in png_files:
-            img = Image.open(png_file)
-            img_array = np.array(img)
-            despeckled = remove_isolated_pixels(img_array)
-            Image.fromarray(despeckled).save(png_file)
-
         # ========== 步骤 4: 颜色量化 ==========
 
         self.report({"INFO"}, "步骤 4/4: 颜色量化...")
@@ -650,8 +775,12 @@ class PIXELART_OT_one_click_process(Operator):
             img = Image.open(png_file)
             img_array = np.array(img)
 
+            # 亮度托底：防止内部暗色细节被 KMeans 聚类吞噬合并成黑色
+            # 对于深色皮带这种细节，提升亮度可以把它与真正的纯黑/背景区分开
+            clamped = clamp_minimum_brightness(img_array, min_luminance=35)
+
             # 颜色量化
-            quantized = quantize_colors(img_array, max_colors=max_colors)
+            quantized = quantize_colors(clamped, max_colors=max_colors)
 
             # 保存
             Image.fromarray(quantized).save(png_file)
