@@ -500,11 +500,28 @@ class PIXELART_OT_one_click_process(Operator):
         original_filepath = scene.render.filepath
         original_filter_size = scene.render.filter_size
         original_film_transparent = scene.render.film_transparent
+        
+        # 尝试保存 Eevee 采样设置 (Blender 4.2 Eevee-Next)
+        original_eevee_samples = None
+        try:
+            if hasattr(scene, "eevee") and hasattr(scene.eevee, "taa_render_samples"):
+                original_eevee_samples = scene.eevee.taa_render_samples
+        except: pass
 
         # 应用渲染设置
         scene.render.resolution_x = settings.render_resolution_x
         scene.render.resolution_y = settings.render_resolution_y
-        scene.render.filter_size = 0.0 if settings.disable_antialiasing else 1.5
+        
+        if settings.disable_antialiasing:
+            scene.render.filter_size = 0.0
+            # 【杀手锏】强制将 Eevee 渲染采样设为 1。
+            # 这是 Blender 产生边缘黑灰色杂边的罪魁祸首！(多采样会导致边缘像素和透明底进行混合)
+            try:
+                if hasattr(scene, "eevee") and hasattr(scene.eevee, "taa_render_samples"):
+                    scene.eevee.taa_render_samples = 1
+            except: pass
+        else:
+            scene.render.filter_size = 1.5
 
         # 设置渲染输出格式
         scene.render.image_settings.file_format = "PNG"
@@ -523,6 +540,10 @@ class PIXELART_OT_one_click_process(Operator):
         scene.render.filepath = original_filepath
         scene.render.filter_size = original_filter_size
         scene.render.film_transparent = original_film_transparent
+        try:
+            if original_eevee_samples is not None and hasattr(scene, "eevee"):
+                scene.eevee.taa_render_samples = original_eevee_samples
+        except: pass
 
         self.report({"INFO"}, f"渲染完成: {frame_count} 帧")
 
