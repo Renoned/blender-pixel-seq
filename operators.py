@@ -683,29 +683,23 @@ class PIXELART_OT_setup_pixel_lighting(Operator):
     def execute(self, context):
         import math
         
-        # 1. 选中并删除所有现有光源
-        bpy.ops.object.select_all(action='DESELECT')
-        count = 0
-        for obj in context.scene.objects:
-            if obj.type == 'LIGHT':
-                obj.select_set(True)
-                count += 1
-        
-        if count > 0:
-            bpy.ops.object.delete()
+        # 1. 使用底层 API 删除光源，避免 bpy.ops 导致的上下文错误 (Context Incorrect)
+        lights_to_delete = [obj for obj in context.scene.objects if obj.type == 'LIGHT']
+        count = len(lights_to_delete)
+        for obj in lights_to_delete:
+            bpy.data.objects.remove(obj, do_unlink=True)
 
-        # 2. 添加一个强力且阴影锐利的平行光 (Sun)
-        # 旋转角度设置为经典的等轴测(Isometric)或适合像素画的 45 度角
-        bpy.ops.object.light_add(
-            type='SUN', 
-            align='WORLD', 
-            location=(0, 0, 5), 
-            rotation=(math.radians(45), 0, math.radians(45))
-        )
-        sun = context.active_object
-        sun.data.energy = 2.0  # 保证足够的亮度让 Toon Shader 亮部显现
-        sun.data.angle = 0.0   # 【核心】太阳光角度设为0，产生绝对锐利的硬阴影，防止 Eevee 阴影模糊
-        sun.name = "PixelArt_Sun"
+        # 2. 使用底层 API 添加一盏强力且阴影锐利的平行光 (Sun)
+        light_data = bpy.data.lights.new(name="PixelArt_Sun_Data", type='SUN')
+        light_data.energy = 2.0  # 保证足够的亮度让 Toon Shader 亮部显现
+        light_data.angle = 0.0   # 【核心】太阳光角度设为0，产生绝对锐利的硬阴影
+        
+        light_obj = bpy.data.objects.new(name="PixelArt_Sun", object_data=light_data)
+        context.collection.objects.link(light_obj) # 链接到当前集合
+        
+        # 旋转角度设置为经典的 45 度角
+        light_obj.location = (0, 0, 5)
+        light_obj.rotation_euler = (math.radians(45), 0, math.radians(45))
 
         self.report({"INFO"}, f"已清理 {count} 个杂乱光源，并生成了适合像素画的硬阴影平行光！")
         return {"FINISHED"}
