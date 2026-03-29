@@ -368,6 +368,65 @@ def apply_pixel_outline(img_array, outline_color=(0, 0, 0)):
     return result
 
 
+def close_outline_gaps(img_array):
+    """对黑色边框做 1px 闭运算，补齐断断续续的描边"""
+    height, width = img_array.shape[:2]
+    channels = img_array.shape[2] if len(img_array.shape) > 2 else 1
+    if channels < 3:
+        return img_array
+
+    result = img_array.copy()
+    rgb = result[:, :, :3]
+
+    # 黑线判定阈值
+    black_mask = (rgb[:, :, 0] < 35) & (rgb[:, :, 1] < 35) & (rgb[:, :, 2] < 35)
+    alpha_mask = np.ones((height, width), dtype=bool)
+    if channels == 4:
+        alpha_mask = result[:, :, 3] > 0
+        black_mask = black_mask & alpha_mask
+
+    # 3x3 膨胀
+    dilated = np.zeros_like(black_mask)
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            y_src_start = max(0, -dy)
+            y_src_end = height - max(0, dy)
+            x_src_start = max(0, -dx)
+            x_src_end = width - max(0, dx)
+
+            y_dst_start = max(0, dy)
+            y_dst_end = height - max(0, -dy)
+            x_dst_start = max(0, dx)
+            x_dst_end = width - max(0, -dx)
+
+            dilated[y_dst_start:y_dst_end, x_dst_start:x_dst_end] |= black_mask[
+                y_src_start:y_src_end, x_src_start:x_src_end
+            ]
+
+    # 3x3 腐蚀（闭运算完成）
+    closed = np.ones_like(dilated)
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            y_src_start = max(0, -dy)
+            y_src_end = height - max(0, dy)
+            x_src_start = max(0, -dx)
+            x_src_end = width - max(0, dx)
+
+            y_dst_start = max(0, dy)
+            y_dst_end = height - max(0, -dy)
+            x_dst_start = max(0, dx)
+            x_dst_end = width - max(0, -dx)
+
+            closed[y_dst_start:y_dst_end, x_dst_start:x_dst_end] &= dilated[
+                y_src_start:y_src_end, x_src_start:x_src_end
+            ]
+
+    # 仅在实体像素范围内补线
+    closed = closed & alpha_mask
+    result[closed, :3] = np.array([0, 0, 0], dtype=np.uint8)
+    return result
+
+
 def snap_to_grid(img_array, grid_size):
     """将像素对齐到网格，同时过滤掉会导致黑边的半透明边缘像素"""
     height, width = img_array.shape[:2]
@@ -542,12 +601,12 @@ class PIXELART_OT_convert_toon_shader(Operator):
                     strength_input = surface_src.inputs.get("Strength")
                     if strength_input and not strength_input.is_linked:
                         strength_input.default_value = min(
-                            float(strength_input.default_value), 0.25
+                            float(strength_input.default_value), 0.6
                         )
                     weight_input = surface_src.inputs.get("Weight")
                     if weight_input and not weight_input.is_linked:
                         weight_input.default_value = min(
-                            float(weight_input.default_value), 0.35
+                            float(weight_input.default_value), 0.65
                         )
                     count += 1
                     continue
@@ -638,7 +697,7 @@ class PIXELART_OT_convert_toon_shader(Operator):
             emission_node.location = (320, -80)
             links.new(mix_color.outputs[2], emission_node.inputs["Color"])
             if "Strength" in emission_node.inputs:
-                emission_node.inputs["Strength"].default_value = 0.25
+                emission_node.inputs["Strength"].default_value = 1.0
 
             # 5. 连接到材质输出
             if output_node:
@@ -786,6 +845,14 @@ class PIXELART_OT_one_click_process(Operator):
             Image.fromarray(quantized).save(png_file)
 
         self.report({"INFO"}, f"颜色量化完成: {len(png_files)} 张")
+
+        # ========== 步骤 4.5: 边框补线（闭运算） ==========
+        self.report({"INFO"}, "步骤 4.5/5: 边框补线...")
+        for png_file in png_files:
+            img = Image.open(png_file)
+            img_array = np.array(img)
+            closed = close_outline_gaps(img_array)
+            Image.fromarray(closed).save(png_file)
 
         # ========== 步骤 5: 可选描边 ==========
         if settings.enable_outline:
