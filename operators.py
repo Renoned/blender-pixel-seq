@@ -135,6 +135,46 @@ def remove_antialiasing(img_array, threshold=0.3):
     return result
 
 
+
+def remove_isolated_pixels(img_array):
+    """众数滤波器 (Mode Filter)：移除孤立的噪点像素，使色块更纯净"""
+    height, width = img_array.shape[:2]
+    channels = img_array.shape[2] if len(img_array.shape) > 2 else 1
+    if channels < 3: return img_array
+    
+    result = img_array.copy()
+    
+    # 将图像转换为更快的整数视图来进行比较
+    img_view = img_array.view(dtype=np.uint32).reshape(height, width) if channels == 4 else img_array
+    
+    for y in range(1, height - 1):
+        for x in range(1, width - 1):
+            if channels == 4 and img_array[y, x, 3] == 0:
+                continue
+                
+            # 收集周围 8 个邻居的颜色
+            neighbors = []
+            for dy in [-1, 0, 1]:
+                for dx in [-1, 0, 1]:
+                    if dy == 0 and dx == 0: continue
+                    ny, nx = y + dy, x + dx
+                    if channels == 4 and img_array[ny, nx, 3] == 0: continue
+                    neighbors.append(tuple(img_array[ny, nx, :3]))
+            
+            if not neighbors: continue
+            
+            # 计算出现频率最高的颜色
+            from collections import Counter
+            counts = Counter(neighbors)
+            most_common_color, max_count = counts.most_common(1)[0]
+            current_color = tuple(img_array[y, x, :3])
+            
+            # 如果当前颜色在周围出现的次数少于 2 次（孤立点），或者周围某种颜色占据绝对优势（>=5），则替换
+            if counts[current_color] < 2 or max_count >= 5:
+                result[y, x, :3] = most_common_color
+                
+    return result
+
 def quantize_colors(img_array, max_colors=16):
     """颜色量化"""
     from sklearn.cluster import KMeans
@@ -369,15 +409,21 @@ class PIXELART_OT_convert_toon_shader(Operator):
             shader_to_rgb.location = (principled.location.x - 600, principled.location.y + 100)
             links.new(diffuse_node.outputs["BSDF"], shader_to_rgb.inputs["Shader"])
 
-            # 3. ColorRamp (Linear 平滑过渡)
-            # 使用 Linear 并在 0.4 到 0.6 之间形成一段柔和的阴影过渡带，而不是死硬的锯齿边缘
+            # 3. ColorRamp (Constant 纯粹赛璐璐色块)
+            # 像素画最忌讳的就是渐变(Gradient)。一旦有渐变，网格化后就会产生杂乱无章的噪点。
+            # 所以这里必须用 CONSTANT 强制把光影分成纯净的几个层级。
             color_ramp = nodes.new(type="ShaderNodeValToRGB")
             color_ramp.location = (principled.location.x - 300, principled.location.y + 100)
-            color_ramp.color_ramp.interpolation = "LINEAR" 
-            color_ramp.color_ramp.elements[0].position = 0.4
-            color_ramp.color_ramp.elements[0].color = (0.5, 0.5, 0.5, 1.0) # 阴影强度
-            color_ramp.color_ramp.elements[1].position = 0.6
-            color_ramp.color_ramp.elements[1].color = (1.0, 1.0, 1.0, 1.0) # 亮部强度
+            color_ramp.color_ramp.interpolation = "CONSTANT" 
+            color_ramp.color_ramp.elements[0].position = 0.0
+            color_ramp.color_ramp.elements[0].color = (0.4, 0.4, 0.4, 1.0) # 暗部阴影
+            
+            # 添加中灰层(可选的体积感)
+            color_ramp.color_ramp.elements.new(0.35)
+            color_ramp.color_ramp.elements[1].color = (0.7, 0.7, 0.7, 1.0) # 灰部
+            
+            color_ramp.color_ramp.elements.new(0.65)
+            color_ramp.color_ramp.elements[2].color = (1.0, 1.0, 1.0, 1.0) # 亮部
             links.new(shader_to_rgb.outputs["Color"], color_ramp.inputs["Fac"])
 
             # 4. 原颜色贴图正片叠底 (乘以光影)
@@ -487,7 +533,17 @@ class PIXELART_OT_one_click_process(Operator):
 
         self.report({"INFO"}, f"抗锯齿移除完成: {len(png_files)} 张")
 
+
+        # ========== 步骤 3.5: 孤立噪点去除 (Despeckle) ==========
+        self.report({"INFO"}, "步骤: 移除孤立噪点...")
+        for png_file in png_files:
+            img = Image.open(png_file)
+            img_array = np.array(img)
+            despeckled = remove_isolated_pixels(img_array)
+            Image.fromarray(despeckled).save(png_file)
+
         # ========== 步骤 4: 颜色量化 ==========
+
         self.report({"INFO"}, "步骤 4/4: 颜色量化...")
 
         max_colors = settings.max_colors
