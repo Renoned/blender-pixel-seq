@@ -54,38 +54,44 @@ class PixelArtSettings(PropertyGroup):
     )
 
     enable_outline: BoolProperty(
-        name="生成纯正像素外描边", description="在透明边缘生成一圈绝对纯净的1像素黑色描边", default=False
+        name="生成纯正像素外描边",
+        description="在透明边缘生成一圈绝对纯净的1像素黑色描边",
+        default=False,
     )
-
 
 
 import json
 
+
 def get_settings_file():
     return os.path.join(os.path.dirname(__file__), "settings.json")
+
 
 def load_settings():
     file_path = get_settings_file()
     if os.path.exists(file_path):
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, "r", encoding="utf-8") as f:
                 return json.load(f)
         except:
             pass
     return {}
 
+
 def save_settings(settings_dict):
     try:
-        with open(get_settings_file(), 'w', encoding='utf-8') as f:
+        with open(get_settings_file(), "w", encoding="utf-8") as f:
             json.dump(settings_dict, f, indent=4)
     except:
         pass
 
+
 class PIXELART_OT_save_preset(Operator):
     """保存当前设置为默认预设"""
+
     bl_idname = "pixelart.save_preset"
     bl_label = "保存为默认预设"
-    
+
     def execute(self, context):
         settings = context.scene.pixelart_settings
         settings_dict = {
@@ -102,23 +108,33 @@ class PIXELART_OT_save_preset(Operator):
         self.report({"INFO"}, "预设已保存！下次打开Blender将自动加载。")
         return {"FINISHED"}
 
+
 class PIXELART_OT_load_preset(Operator):
     """加载保存的预设"""
+
     bl_idname = "pixelart.load_preset"
     bl_label = "加载预设"
-    
+
     def execute(self, context):
         settings = context.scene.pixelart_settings
         saved = load_settings()
         if saved:
-            if "output_path" in saved: settings.output_path = saved["output_path"]
-            if "disable_antialiasing" in saved: settings.disable_antialiasing = saved["disable_antialiasing"]
-            if "render_resolution_x" in saved: settings.render_resolution_x = saved["render_resolution_x"]
-            if "render_resolution_y" in saved: settings.render_resolution_y = saved["render_resolution_y"]
-            if "pixel_size" in saved: settings.pixel_size = saved["pixel_size"]
-            if "denoise_threshold" in saved: settings.denoise_threshold = saved["denoise_threshold"]
-            if "max_colors" in saved: settings.max_colors = saved["max_colors"]
-            if "enable_outline" in saved: settings.enable_outline = saved["enable_outline"]
+            if "output_path" in saved:
+                settings.output_path = saved["output_path"]
+            if "disable_antialiasing" in saved:
+                settings.disable_antialiasing = saved["disable_antialiasing"]
+            if "render_resolution_x" in saved:
+                settings.render_resolution_x = saved["render_resolution_x"]
+            if "render_resolution_y" in saved:
+                settings.render_resolution_y = saved["render_resolution_y"]
+            if "pixel_size" in saved:
+                settings.pixel_size = saved["pixel_size"]
+            if "denoise_threshold" in saved:
+                settings.denoise_threshold = saved["denoise_threshold"]
+            if "max_colors" in saved:
+                settings.max_colors = saved["max_colors"]
+            if "enable_outline" in saved:
+                settings.enable_outline = saved["enable_outline"]
             self.report({"INFO"}, "预设已加载！")
         else:
             self.report({"WARNING"}, "未找到保存的预设！")
@@ -174,22 +190,21 @@ class PIXELART_PT_main_panel(Panel):
         row = box.row()
         row.prop(settings, "enable_outline")
 
-
         # 预设管理
         box = layout.box()
         box.label(text="预设管理", icon="PRESET")
         row = box.row(align=True)
         row.operator("pixelart.save_preset", icon="FILE_TICK")
         row.operator("pixelart.load_preset", icon="FILE_REFRESH")
-        
+
         # 场景与材质预处理
         box = layout.box()
         box.label(text="场景与材质预处理", icon="SCENE_DATA")
-        
+
         row = box.row()
         row.scale_y = 1.2
         row.operator("pixelart.setup_pixel_lighting", icon="LIGHT_SUN")
-        
+
         row = box.row()
         row.scale_y = 1.2
         row.operator("pixelart.flatten_materials", icon="SHADING_RENDERED")
@@ -253,27 +268,34 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
 
-
     bpy.types.Scene.pixelart_settings = PointerProperty(type=PixelArtSettings)
-    
+
     # 延迟加载设置，因为场景可能还没完全初始化
     def load_initial_settings():
         saved = load_settings()
         if saved and bpy.context.scene:
             try:
                 settings = bpy.context.scene.pixelart_settings
-                if "output_path" in saved: settings.output_path = saved["output_path"]
-                if "disable_antialiasing" in saved: settings.disable_antialiasing = saved["disable_antialiasing"]
-                if "render_resolution_x" in saved: settings.render_resolution_x = saved["render_resolution_x"]
-                if "render_resolution_y" in saved: settings.render_resolution_y = saved["render_resolution_y"]
-                if "pixel_size" in saved: settings.pixel_size = saved["pixel_size"]
-                if "denoise_threshold" in saved: settings.denoise_threshold = saved["denoise_threshold"]
-                if "max_colors" in saved: settings.max_colors = saved["max_colors"]
-            if "enable_outline" in saved: settings.enable_outline = saved["enable_outline"]
+                if "output_path" in saved:
+                    settings.output_path = saved["output_path"]
+                if "disable_antialiasing" in saved:
+                    settings.disable_antialiasing = saved["disable_antialiasing"]
+                if "render_resolution_x" in saved:
+                    settings.render_resolution_x = saved["render_resolution_x"]
+                if "render_resolution_y" in saved:
+                    settings.render_resolution_y = saved["render_resolution_y"]
+                if "pixel_size" in saved:
+                    settings.pixel_size = saved["pixel_size"]
+                if "denoise_threshold" in saved:
+                    settings.denoise_threshold = saved["denoise_threshold"]
+                if "max_colors" in saved:
+                    settings.max_colors = saved["max_colors"]
+                if "enable_outline" in saved:
+                    settings.enable_outline = saved["enable_outline"]
             except:
                 pass
         return None
-    
+
     bpy.app.timers.register(load_initial_settings, first_interval=1.0)
 
 
