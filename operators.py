@@ -450,23 +450,39 @@ class PIXELART_OT_convert_toon_shader(Operator):
             color_ramp.color_ramp.elements[2].color = (1.0, 1.0, 1.0, 1.0) # 亮部
             links.new(shader_to_rgb.outputs["Color"], color_ramp.inputs["Fac"])
 
-            # 4. 原颜色贴图正片叠底 (乘以光影)
-            multiply_node = nodes.new(type="ShaderNodeMix")
-            multiply_node.data_type = "RGBA"
-            multiply_node.blend_type = "MULTIPLY"
-            multiply_node.location = (principled.location.x + 100, principled.location.y)
-            multiply_node.inputs[0].default_value = 1.0 # Factor
-            
+            # 4. 阴影色生成 (HSV降低明度，而不是直接乘黑)
+            # 我们拿原色，把它的 Value(亮度) 降低，作为阴影色。这样能保证它是一个“深色”，而不是“脏黑色”。
+            hue_sat_node = nodes.new(type="ShaderNodeHueSaturation")
+            hue_sat_node.location = (principled.location.x + 50, principled.location.y - 200)
+            hue_sat_node.inputs["Value"].default_value = 0.5   # 阴影亮度降低到 50%
+            hue_sat_node.inputs["Saturation"].default_value = 1.2 # 阴影饱和度稍微提高，符合二次元习惯
             if original_color_link:
-                links.new(original_color_link, multiply_node.inputs[6]) # A
+                links.new(original_color_link, hue_sat_node.inputs["Color"])
             else:
-                multiply_node.inputs[6].default_value = original_color_value
-            links.new(color_ramp.outputs["Color"], multiply_node.inputs[7]) # B
+                hue_sat_node.inputs["Color"].default_value = original_color_value
 
-            # 5. Emission 输出
+            # 5. Mix (根据光影黑白遮罩，在原色和阴影色之间切换)
+            # 这样即使光影里有极度黑的死角，它也只是切换成 hue_sat_node 里的“降暗色”，绝不会输出 0,0,0 黑！
+            mix_node = nodes.new(type="ShaderNodeMix")
+            mix_node.data_type = "RGBA"
+            mix_node.blend_type = "MIX"
+            mix_node.location = (principled.location.x + 300, principled.location.y)
+            
+            # ColorRamp 出来的黑白灰，连给 Factor。
+            links.new(color_ramp.outputs["Color"], mix_node.inputs[0]) 
+            
+            # A 槽: 0 (黑色阴影区) -> 连阴影色
+            links.new(hue_sat_node.outputs["Color"], mix_node.inputs[6])
+            # B 槽: 1 (白色亮部区) -> 连原色
+            if original_color_link:
+                links.new(original_color_link, mix_node.inputs[7])
+            else:
+                mix_node.inputs[7].default_value = original_color_value
+
+            # 6. Emission 输出
             emission_node = nodes.new(type="ShaderNodeEmission")
-            emission_node.location = (principled.location.x + 400, principled.location.y)
-            links.new(multiply_node.outputs[2], emission_node.inputs["Color"])
+            emission_node.location = (principled.location.x + 600, principled.location.y)
+            links.new(mix_node.outputs[2], emission_node.inputs["Color"])
 
             if output_node:
                 links.new(emission_node.outputs["Emission"], output_node.inputs["Surface"])
