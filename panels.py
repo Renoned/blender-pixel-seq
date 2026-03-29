@@ -53,6 +53,10 @@ class PixelArtSettings(PropertyGroup):
         name="最大颜色数", description="量化后的颜色数量", default=15, min=2, max=256
     )
 
+    enable_outline: BoolProperty(
+        name="生成纯正像素外描边", description="在透明边缘生成一圈绝对纯净的1像素黑色描边", default=False
+    )
+
 
 
 import json
@@ -92,6 +96,7 @@ class PIXELART_OT_save_preset(Operator):
             "pixel_size": settings.pixel_size,
             "denoise_threshold": settings.denoise_threshold,
             "max_colors": settings.max_colors,
+            "enable_outline": settings.enable_outline,
         }
         save_settings(settings_dict)
         self.report({"INFO"}, "预设已保存！下次打开Blender将自动加载。")
@@ -113,6 +118,7 @@ class PIXELART_OT_load_preset(Operator):
             if "pixel_size" in saved: settings.pixel_size = saved["pixel_size"]
             if "denoise_threshold" in saved: settings.denoise_threshold = saved["denoise_threshold"]
             if "max_colors" in saved: settings.max_colors = saved["max_colors"]
+            if "enable_outline" in saved: settings.enable_outline = saved["enable_outline"]
             self.report({"INFO"}, "预设已加载！")
         else:
             self.report({"WARNING"}, "未找到保存的预设！")
@@ -165,6 +171,8 @@ class PIXELART_PT_main_panel(Panel):
         row.prop(settings, "denoise_threshold")
         row = box.row()
         row.prop(settings, "max_colors")
+        row = box.row()
+        row.prop(settings, "enable_outline")
 
 
         # 预设管理
@@ -261,6 +269,7 @@ def register():
                 if "pixel_size" in saved: settings.pixel_size = saved["pixel_size"]
                 if "denoise_threshold" in saved: settings.denoise_threshold = saved["denoise_threshold"]
                 if "max_colors" in saved: settings.max_colors = saved["max_colors"]
+            if "enable_outline" in saved: settings.enable_outline = saved["enable_outline"]
             except:
                 pass
         return None

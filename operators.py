@@ -236,6 +236,28 @@ def quantize_colors(img_array, max_colors=16):
     return quantized_image
 
 
+
+def apply_pixel_outline(img_array, outline_color=(0, 0, 0)):
+    """在图像的 Alpha 透明边界生成一圈干净的 1px 描边"""
+    height, width = img_array.shape[:2]
+    channels = img_array.shape[2] if len(img_array.shape) > 2 else 1
+    if channels != 4: return img_array
+    
+    result = img_array.copy()
+    for y in range(height):
+        for x in range(width):
+            if img_array[y, x, 3] > 0: # 如果是实体像素
+                # 检查四周是否有透明像素
+                is_edge = False
+                if y == 0 or y == height - 1 or x == 0 or x == width - 1:
+                    is_edge = True
+                else:
+                    if img_array[y-1, x, 3] == 0 or img_array[y+1, x, 3] == 0 or img_array[y, x-1, 3] == 0 or img_array[y, x+1, 3] == 0:
+                        is_edge = True
+                if is_edge:
+                    result[y, x, :3] = outline_color
+    return result
+
 def snap_to_grid(img_array, grid_size):
     """将像素对齐到网格"""
     height, width = img_array.shape[:2]
@@ -477,6 +499,7 @@ class PIXELART_OT_one_click_process(Operator):
         # 保存原始设置
         original_filepath = scene.render.filepath
         original_filter_size = scene.render.filter_size
+        original_film_transparent = scene.render.film_transparent
 
         # 应用渲染设置
         scene.render.resolution_x = settings.render_resolution_x
@@ -486,6 +509,8 @@ class PIXELART_OT_one_click_process(Operator):
         # 设置渲染输出格式
         scene.render.image_settings.file_format = "PNG"
         scene.render.image_settings.color_mode = "RGBA"
+        # 【极其关键】强制开启透明背景！否则边缘会和灰黑色的世界背景融合，产生无法消除的黑边！
+        scene.render.film_transparent = True
 
         # 批量渲染
         frame_count = scene.frame_end - scene.frame_start + 1
@@ -497,6 +522,7 @@ class PIXELART_OT_one_click_process(Operator):
         # 恢复原始设置
         scene.render.filepath = original_filepath
         scene.render.filter_size = original_filter_size
+        scene.render.film_transparent = original_film_transparent
 
         self.report({"INFO"}, f"渲染完成: {frame_count} 帧")
 
@@ -560,6 +586,16 @@ class PIXELART_OT_one_click_process(Operator):
             Image.fromarray(quantized).save(png_file)
 
         self.report({"INFO"}, f"颜色量化完成: {len(png_files)} 张")
+
+        # ========== 步骤 5: 可选描边 ==========
+        if settings.enable_outline:
+            self.report({"INFO"}, "步骤 5/5: 生成外描边...")
+            for png_file in png_files:
+                img = Image.open(png_file)
+                img_array = np.array(img)
+                outlined = apply_pixel_outline(img_array)
+                Image.fromarray(outlined).save(png_file)
+
         self.report({"INFO"}, "处理完成！点击「预览效果」查看")
         return {"FINISHED"}
 
