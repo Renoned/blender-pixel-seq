@@ -50,8 +50,71 @@ class PixelArtSettings(PropertyGroup):
 
     # 颜色量化设置
     max_colors: IntProperty(
-        name="最大颜色数", description="量化后的颜色数量", default=16, min=2, max=256
+        name="最大颜色数", description="量化后的颜色数量", default=15, min=2, max=256
     )
+
+
+
+import json
+
+def get_settings_file():
+    return os.path.join(os.path.dirname(__file__), "settings.json")
+
+def load_settings():
+    file_path = get_settings_file()
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            pass
+    return {}
+
+def save_settings(settings_dict):
+    try:
+        with open(get_settings_file(), 'w', encoding='utf-8') as f:
+            json.dump(settings_dict, f, indent=4)
+    except:
+        pass
+
+class PIXELART_OT_save_preset(Operator):
+    """保存当前设置为默认预设"""
+    bl_idname = "pixelart.save_preset"
+    bl_label = "保存为默认预设"
+    
+    def execute(self, context):
+        settings = context.scene.pixelart_settings
+        settings_dict = {
+            "disable_antialiasing": settings.disable_antialiasing,
+            "render_resolution_x": settings.render_resolution_x,
+            "render_resolution_y": settings.render_resolution_y,
+            "pixel_size": settings.pixel_size,
+            "denoise_threshold": settings.denoise_threshold,
+            "max_colors": settings.max_colors,
+        }
+        save_settings(settings_dict)
+        self.report({"INFO"}, "预设已保存！下次打开Blender将自动加载。")
+        return {"FINISHED"}
+
+class PIXELART_OT_load_preset(Operator):
+    """加载保存的预设"""
+    bl_idname = "pixelart.load_preset"
+    bl_label = "加载预设"
+    
+    def execute(self, context):
+        settings = context.scene.pixelart_settings
+        saved = load_settings()
+        if saved:
+            if "disable_antialiasing" in saved: settings.disable_antialiasing = saved["disable_antialiasing"]
+            if "render_resolution_x" in saved: settings.render_resolution_x = saved["render_resolution_x"]
+            if "render_resolution_y" in saved: settings.render_resolution_y = saved["render_resolution_y"]
+            if "pixel_size" in saved: settings.pixel_size = saved["pixel_size"]
+            if "denoise_threshold" in saved: settings.denoise_threshold = saved["denoise_threshold"]
+            if "max_colors" in saved: settings.max_colors = saved["max_colors"]
+            self.report({"INFO"}, "预设已加载！")
+        else:
+            self.report({"WARNING"}, "未找到保存的预设！")
+        return {"FINISHED"}
 
 
 class PIXELART_PT_main_panel(Panel):
@@ -101,6 +164,14 @@ class PIXELART_PT_main_panel(Panel):
         row = box.row()
         row.prop(settings, "max_colors")
 
+
+        # 预设管理
+        box = layout.box()
+        box.label(text="预设管理", icon="PRESET")
+        row = box.row(align=True)
+        row.operator("pixelart.save_preset", icon="FILE_TICK")
+        row.operator("pixelart.load_preset", icon="FILE_REFRESH")
+        
         # 材质辅助
         box = layout.box()
         box.label(text="材质物理去噪与二次元化", icon="MATERIAL")
@@ -156,6 +227,8 @@ class PIXELART_OT_apply_render_settings(Operator):
 
 classes = (
     PixelArtSettings,
+    PIXELART_OT_save_preset,
+    PIXELART_OT_load_preset,
     PIXELART_PT_main_panel,
     PIXELART_OT_apply_render_settings,
 )
@@ -165,7 +238,26 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
 
+
     bpy.types.Scene.pixelart_settings = PointerProperty(type=PixelArtSettings)
+    
+    # 延迟加载设置，因为场景可能还没完全初始化
+    def load_initial_settings():
+        saved = load_settings()
+        if saved and bpy.context.scene:
+            try:
+                settings = bpy.context.scene.pixelart_settings
+                if "disable_antialiasing" in saved: settings.disable_antialiasing = saved["disable_antialiasing"]
+                if "render_resolution_x" in saved: settings.render_resolution_x = saved["render_resolution_x"]
+                if "render_resolution_y" in saved: settings.render_resolution_y = saved["render_resolution_y"]
+                if "pixel_size" in saved: settings.pixel_size = saved["pixel_size"]
+                if "denoise_threshold" in saved: settings.denoise_threshold = saved["denoise_threshold"]
+                if "max_colors" in saved: settings.max_colors = saved["max_colors"]
+            except:
+                pass
+        return None
+    
+    bpy.app.timers.register(load_initial_settings, first_interval=1.0)
 
 
 def unregister():

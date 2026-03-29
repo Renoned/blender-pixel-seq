@@ -281,15 +281,46 @@ class PIXELART_OT_flatten_materials(Operator):
         return {"FINISHED"}
 
 
+# 内部拜耳矩阵图像生成器
+def get_bayer_image():
+    img_name = "bayer_matrix_4x4"
+    if img_name in bpy.data.images:
+        return bpy.data.images[img_name]
+
+    # 4x4 Bayer 矩阵数据，归一化到 0-1
+    bayer_matrix = (
+        np.array(
+            [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]],
+            dtype=np.float32,
+        )
+        / 16.0
+    )
+
+    img = bpy.data.images.new(
+        img_name, width=4, height=4, alpha=False, float_buffer=True
+    )
+    pixels = np.zeros((4, 4, 4), dtype=np.float32)
+    # 反转Y轴因为Blender图像坐标从左下角开始
+    for y in range(4):
+        for x in range(4):
+            val = bayer_matrix[3 - y, x]
+            pixels[y, x] = [val, val, val, 1.0]
+
+    img.pixels = pixels.flatten()
+    return img
+
+
 class PIXELART_OT_convert_toon_shader(Operator):
-    """将物理材质转换为硬边缘的二次元卡通材质，结合Python算法效果极佳"""
+    """提取了顶级插件的 Bayer Dithering 技术融合进去"""
 
     bl_idname = "pixelart.convert_toon_shader"
-    bl_label = "一键材质转二次元卡通"
+    bl_label = "一键材质转二次元卡通 (平滑过渡)"
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
         count = 0
+        
+
         for mat in bpy.data.materials:
             if not mat.use_nodes or not mat.node_tree:
                 continue
@@ -309,73 +340,72 @@ class PIXELART_OT_convert_toon_shader(Operator):
 
             # 找到连接到 Base Color 的节点或颜色值
             base_color_input = principled.inputs.get("Base Color")
-            if not base_color_input:
-                continue
-
             original_color_link = None
-            original_color_value = base_color_input.default_value
-            if base_color_input.is_linked:
+            original_color_value = (
+                base_color_input.default_value
+                if base_color_input
+                else (0.8, 0.8, 0.8, 1.0)
+            )
+            if base_color_input and base_color_input.is_linked:
                 original_color_link = base_color_input.links[0].from_socket
 
-            # --- 构建卡通节点树 ---
-            diffuse_node = nodes.new(type="ShaderNodeBsdfDiffuse")
-            diffuse_node.location = (
-                principled.location.x - 600,
-                principled.location.y + 200,
-            )
-            diffuse_node.inputs["Color"].default_value = (1.0, 1.0, 1.0, 1.0)
-
-            shader_to_rgb = nodes.new(type="ShaderNodeShaderToRGB")
-            shader_to_rgb.location = (
-                principled.location.x - 400,
-                principled.location.y + 200,
-            )
-            links.new(diffuse_node.outputs[0], shader_to_rgb.inputs[0])
-
-            color_ramp = nodes.new(type="ShaderNodeValToRGB")
-            color_ramp.location = (
-                principled.location.x - 200,
-                principled.location.y + 200,
-            )
-            color_ramp.color_ramp.interpolation = "CONSTANT"
-            color_ramp.color_ramp.elements[0].position = 0.3
-            color_ramp.color_ramp.elements[0].color = (0.5, 0.5, 0.5, 1.0)
-            color_ramp.color_ramp.elements[1].position = 0.6
-            color_ramp.color_ramp.elements[1].color = (1.0, 1.0, 1.0, 1.0)
-            links.new(shader_to_rgb.outputs[0], color_ramp.inputs[0])
-
-            mix_node = nodes.new(type="ShaderNodeMix")
-            mix_node.data_type = "RGBA"
-            mix_node.blend_type = "MULTIPLY"
-            mix_node.location = (principled.location.x, principled.location.y + 200)
-            mix_node.inputs[0].default_value = 1.0
-
-            if original_color_link:
-                links.new(original_color_link, mix_node.inputs[6])
-            else:
-                mix_node.inputs[6].default_value = original_color_value
-
-            links.new(color_ramp.outputs[0], mix_node.inputs[7])
-
-            emission_node = nodes.new(type="ShaderNodeEmission")
-            emission_node.location = (
-                principled.location.x + 200,
-                principled.location.y + 200,
-            )
-            links.new(mix_node.outputs[2], emission_node.inputs[0])
-
+            # 找到输出节点
             output_node = None
             for node in nodes:
                 if node.type == "OUTPUT_MATERIAL":
                     output_node = node
                     break
 
+                                    # --- 平滑二次元卡通节点树 (Smooth Cel Shading) ---
+            
+            # 1. 新建一个纯白 Diffuse BSDF 用来捕捉纯粹的光影
+            diffuse_node = nodes.new(type="ShaderNodeBsdfDiffuse")
+            diffuse_node.location = (principled.location.x - 800, principled.location.y + 100)
+            diffuse_node.inputs["Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+            diffuse_node.inputs["Roughness"].default_value = 1.0
+
+            # 2. Shader to RGB
+            shader_to_rgb = nodes.new(type="ShaderNodeShaderToRGB")
+            shader_to_rgb.location = (principled.location.x - 600, principled.location.y + 100)
+            links.new(diffuse_node.outputs["BSDF"], shader_to_rgb.inputs["Shader"])
+
+            # 3. ColorRamp (Linear 平滑过渡)
+            # 使用 Linear 并在 0.4 到 0.6 之间形成一段柔和的阴影过渡带，而不是死硬的锯齿边缘
+            color_ramp = nodes.new(type="ShaderNodeValToRGB")
+            color_ramp.location = (principled.location.x - 300, principled.location.y + 100)
+            color_ramp.color_ramp.interpolation = "LINEAR" 
+            color_ramp.color_ramp.elements[0].position = 0.4
+            color_ramp.color_ramp.elements[0].color = (0.5, 0.5, 0.5, 1.0) # 阴影强度
+            color_ramp.color_ramp.elements[1].position = 0.6
+            color_ramp.color_ramp.elements[1].color = (1.0, 1.0, 1.0, 1.0) # 亮部强度
+            links.new(shader_to_rgb.outputs["Color"], color_ramp.inputs["Fac"])
+
+            # 4. 原颜色贴图正片叠底 (乘以光影)
+            multiply_node = nodes.new(type="ShaderNodeMix")
+            multiply_node.data_type = "RGBA"
+            multiply_node.blend_type = "MULTIPLY"
+            multiply_node.location = (principled.location.x + 100, principled.location.y)
+            multiply_node.inputs[0].default_value = 1.0 # Factor
+            
+            if original_color_link:
+                links.new(original_color_link, multiply_node.inputs[6]) # A
+            else:
+                multiply_node.inputs[6].default_value = original_color_value
+            links.new(color_ramp.outputs["Color"], multiply_node.inputs[7]) # B
+
+            # 5. Emission 输出
+            emission_node = nodes.new(type="ShaderNodeEmission")
+            emission_node.location = (principled.location.x + 400, principled.location.y)
+            links.new(multiply_node.outputs[2], emission_node.inputs["Color"])
+
             if output_node:
-                links.new(emission_node.outputs[0], output_node.inputs[0])
+                links.new(emission_node.outputs["Emission"], output_node.inputs["Surface"])
 
             count += 1
+            count += 1
+            count += 1
 
-        self.report({"INFO"}, f"成功将 {count} 个材质转化为二次元卡通材质")
+        self.report({"INFO"}, f"成功将 {count} 个材质转化为带像素抖动的卡通材质")
         return {"FINISHED"}
 
 
