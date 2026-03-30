@@ -369,21 +369,29 @@ def apply_pixel_outline(img_array, outline_color=(0, 0, 0)):
 
 
 def close_outline_gaps(img_array):
-    """对黑色边框做 1px 闭运算，补齐断断续续的描边"""
+    """仅对透明边缘附近的黑线做 1px 闭运算，补齐断续描边"""
     height, width = img_array.shape[:2]
     channels = img_array.shape[2] if len(img_array.shape) > 2 else 1
-    if channels < 3:
+    if channels != 4:
         return img_array
 
     result = img_array.copy()
     rgb = result[:, :, :3]
 
-    # 黑线判定阈值
-    black_mask = (rgb[:, :, 0] < 35) & (rgb[:, :, 1] < 35) & (rgb[:, :, 2] < 35)
-    alpha_mask = np.ones((height, width), dtype=bool)
-    if channels == 4:
-        alpha_mask = result[:, :, 3] > 0
-        black_mask = black_mask & alpha_mask
+    alpha_mask = result[:, :, 3] > 0
+
+    # 只在透明边缘附近进行补线，避免把角色内部深色区域误补成黑色
+    edge_mask = np.zeros((height, width), dtype=bool)
+    for y in range(1, height - 1):
+        for x in range(1, width - 1):
+            if not alpha_mask[y, x]:
+                continue
+            if not np.all(alpha_mask[y - 1 : y + 2, x - 1 : x + 2]):
+                edge_mask[y, x] = True
+
+    # 黑线判定阈值（收紧阈值，减少额外黑像素）
+    black_mask = (rgb[:, :, 0] < 22) & (rgb[:, :, 1] < 22) & (rgb[:, :, 2] < 22)
+    black_mask = black_mask & alpha_mask & edge_mask
 
     # 3x3 膨胀
     dilated = np.zeros_like(black_mask)
@@ -421,9 +429,9 @@ def close_outline_gaps(img_array):
                 y_src_start:y_src_end, x_src_start:x_src_end
             ]
 
-    # 仅在实体像素范围内补线
-    closed = closed & alpha_mask
-    result[closed, :3] = np.array([0, 0, 0], dtype=np.uint8)
+    # 仅补“原本不是黑线”的缺口，避免整条线变粗
+    fill_mask = closed & (~black_mask) & edge_mask
+    result[fill_mask, :3] = np.array([0, 0, 0], dtype=np.uint8)
     return result
 
 
@@ -598,16 +606,7 @@ class PIXELART_OT_convert_toon_shader(Operator):
             if surface_input and surface_input.is_linked:
                 surface_src = surface_input.links[0].from_node
                 if surface_src.type == "EMISSION":
-                    strength_input = surface_src.inputs.get("Strength")
-                    if strength_input and not strength_input.is_linked:
-                        strength_input.default_value = min(
-                            float(strength_input.default_value), 0.6
-                        )
-                    weight_input = surface_src.inputs.get("Weight")
-                    if weight_input and not weight_input.is_linked:
-                        weight_input.default_value = min(
-                            float(weight_input.default_value), 0.65
-                        )
+                    # 保留原始 Emission 材质，不在这里改强度，避免“整体变暗”
                     count += 1
                     continue
 
@@ -834,9 +833,8 @@ class PIXELART_OT_one_click_process(Operator):
             img = Image.open(png_file)
             img_array = np.array(img)
 
-            # 亮度托底：防止内部暗色细节被 KMeans 聚类吞噬合并成黑色
-            # 对于深色皮带这种细节，提升亮度可以把它与真正的纯黑/背景区分开
-            clamped = clamp_minimum_brightness(img_array, min_luminance=35)
+            # 亮度托底：温和提亮，避免整体发灰发暗
+            clamped = clamp_minimum_brightness(img_array, min_luminance=36)
 
             # 颜色量化
             quantized = quantize_colors(clamped, max_colors=max_colors)
@@ -847,12 +845,14 @@ class PIXELART_OT_one_click_process(Operator):
         self.report({"INFO"}, f"颜色量化完成: {len(png_files)} 张")
 
         # ========== 步骤 4.5: 边框补线（闭运算） ==========
-        self.report({"INFO"}, "步骤 4.5/5: 边框补线...")
-        for png_file in png_files:
-            img = Image.open(png_file)
-            img_array = np.array(img)
-            closed = close_outline_gaps(img_array)
-            Image.fromarray(closed).save(png_file)
+        # 仅在开启外描边时执行，避免把“正常深色区域”误补成黑像素
+        if settings.enable_outline:
+            self.report({"INFO"}, "步骤 4.5/5: 边框补线...")
+            for png_file in png_files:
+                img = Image.open(png_file)
+                img_array = np.array(img)
+                closed = close_outline_gaps(img_array)
+                Image.fromarray(closed).save(png_file)
 
         # ========== 步骤 5: 可选描边 ==========
         if settings.enable_outline:
