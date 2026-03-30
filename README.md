@@ -156,6 +156,9 @@ A: 参考以下设置：
 
 欢迎提交 Issue 和 Pull Request！
 
+- 贡献指南: `CONTRIBUTING.md`
+- 更新日志: `CHANGELOG.md`
+
 ## 许可证
 
 MIT License

@@ -78,6 +78,11 @@ Then reload scripts or restart Blender.
 
 MIT
 
+## Contributing
+
+- Contribution guide: `CONTRIBUTING.md`
+- Changelog: `CHANGELOG.md`
+
 ## Acknowledgements
 
 - [pixfix](https://github.com/lovelaced/pixfix)
