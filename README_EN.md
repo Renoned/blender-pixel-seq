@@ -1,11 +1,11 @@
 # Blender Pixel Art Denoiser
 
-[![Release](https://img.shields.io/github/v/release/Renoned/blender-pixel-art-denoiser?sort=semver)](https://github.com/Renoned/blender-pixel-art-denoiser/releases)
+[![Release](https://img.shields.io/github/v/release/Renoned/blender-pixel-seq?sort=semver)](https://github.com/Renoned/blender-pixel-seq/releases)
 [![Blender](https://img.shields.io/badge/Blender-3.6%2B-orange?logo=blender)](https://www.blender.org/)
-[![License](https://img.shields.io/github/license/Renoned/blender-pixel-art-denoiser)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/Renoned/blender-pixel-art-denoiser?style=social)](https://github.com/Renoned/blender-pixel-art-denoiser)
+[![License](https://img.shields.io/github/license/Renoned/blender-pixel-seq)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/Renoned/blender-pixel-seq?style=social)](https://github.com/Renoned/blender-pixel-seq)
 
-A Blender addon for generating Dead Cells inspired pixel-art animation sequences from 3D scenes, with a focus on stable frame-to-frame output.
+A Blender addon for generating pixel-style animation sequences from 3D scenes, with a focus on stable frame-to-frame output.
 
 Chinese version: `README.md`
 
@@ -38,7 +38,7 @@ Chinese version: `README.md`
 
 ### Option 1 (Recommended): Install from Releases
 
-1. Open Releases: `https://github.com/Renoned/blender-pixel-art-denoiser/releases`
+1. Open Releases: `https://github.com/Renoned/blender-pixel-seq/releases`
 2. Download the latest package
 3. Blender -> `Edit -> Preferences -> Add-ons -> Install...`
 4. Select the zip and enable **Pixel Art Denoiser**
@@ -102,4 +102,3 @@ MIT
 
 - [pixfix](https://github.com/lovelaced/pixfix)
 - [Lospec Blender Toolkit](https://github.com/lospec/lospec-blender-toolkit)
-- [Dead Cells](https://dead-cells.com/)

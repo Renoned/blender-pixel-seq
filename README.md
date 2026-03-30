@@ -1,11 +1,11 @@
 # Blender Pixel Art Denoiser
 
-[![Release](https://img.shields.io/github/v/release/Renoned/blender-pixel-art-denoiser?sort=semver)](https://github.com/Renoned/blender-pixel-art-denoiser/releases)
+[![Release](https://img.shields.io/github/v/release/Renoned/blender-pixel-seq?sort=semver)](https://github.com/Renoned/blender-pixel-seq/releases)
 [![Blender](https://img.shields.io/badge/Blender-3.6%2B-orange?logo=blender)](https://www.blender.org/)
-[![License](https://img.shields.io/github/license/Renoned/blender-pixel-art-denoiser)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/Renoned/blender-pixel-art-denoiser?style=social)](https://github.com/Renoned/blender-pixel-art-denoiser)
+[![License](https://img.shields.io/github/license/Renoned/blender-pixel-seq)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/Renoned/blender-pixel-seq?style=social)](https://github.com/Renoned/blender-pixel-seq)
 
-一个用于生成 Dead Cells 风格像素动画序列的 Blender 插件，重点是**批量帧一致性**和**可控去噪**。
+一个用于生成像素风动画序列的 Blender 插件，重点是**批量帧一致性**和**可控去噪**。
 
 English version: `README_EN.md`
 
@@ -37,7 +37,7 @@ English version: `README_EN.md`
 
 ### 方法 1（推荐）：Release 安装
 
-1. 打开 Releases 页面：`https://github.com/Renoned/blender-pixel-art-denoiser/releases`
+1. 打开 Releases 页面：`https://github.com/Renoned/blender-pixel-seq/releases`
 2. 下载最新版本压缩包
 3. Blender -> `编辑` -> `偏好设置` -> `插件` -> `安装...`
 4. 选择 zip，启用 `Pixel Art Denoiser`
@@ -103,4 +103,3 @@ MIT License
 
 - [pixfix](https://github.com/lovelaced/pixfix)
 - [Lospec Blender Toolkit](https://github.com/lospec/lospec-blender-toolkit)
-- [Dead Cells](https://dead-cells.com/)（风格灵感）
