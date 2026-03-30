@@ -9,6 +9,16 @@ A Blender addon for generating Dead Cells inspired pixel-art animation sequences
 
 Chinese version: `README.md`
 
+## Visual Comparison
+
+### Original Modeling View
+
+![Original modeling view](docs/images/modeling-source.png)
+
+### Processed Pixel Preview
+
+![Processed pixel preview](docs/images/pixel-preview-result.png)
+
 ## Why This Addon
 
 - Sequence rendering is harder than single-frame conversion.

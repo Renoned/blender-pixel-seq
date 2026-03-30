@@ -86,3 +86,11 @@ denoised/
 *.jpeg
 *.mp4
 *.avi
+
+# Keep documentation images tracked
+!docs/images/
+!docs/images/*.png
+!docs/images/*.jpg
+!docs/images/*.jpeg
+!docs/images/*.webp
+!docs/images/*.gif

@@ -9,6 +9,16 @@
 
 English version: `README_EN.md`
 
+## 效果对比
+
+### 建模原始视图
+
+![建模原始视图](docs/images/modeling-source.png)
+
+### 插件处理后预览
+
+![插件处理后预览](docs/images/pixel-preview-result.png)
+
 ## 为什么做这个插件
 
 - 动画序列比单张图更难，常见问题是闪烁、黑边、脏点和亮度漂移。
