@@ -4,11 +4,17 @@ import glob
 import tempfile
 import numpy as np
 from PIL import Image
-from bpy.props import StringProperty, IntProperty, BoolProperty, FloatProperty
 from bpy.types import Operator
 
 # 临时目录
 TEMP_DIR = os.path.join(tempfile.gettempdir(), "pixel_art_preview")
+
+_PIL_NEAREST = getattr(getattr(Image, "Resampling", Image), "NEAREST", 0)
+_PIL_FASTOCTREE = getattr(
+    getattr(Image, "Quantize", Image),
+    "FASTOCTREE",
+    getattr(Image, "FASTOCTREE", 2),
+)
 
 
 # ========== pixfix 核心算法 (Python 实现) ==========
@@ -196,13 +202,6 @@ def remove_isolated_pixels(img_array):
 
     result = img_array.copy()
 
-    # 将图像转换为更快的整数视图来进行比较
-    img_view = (
-        img_array.view(dtype=np.uint32).reshape(height, width)
-        if channels == 4
-        else img_array
-    )
-
     for y in range(1, height - 1):
         for x in range(1, width - 1):
             if channels == 4 and img_array[y, x, 3] == 0:
@@ -281,10 +280,41 @@ def clamp_minimum_brightness(img_array, min_luminance=35):
     return result
 
 
+def _quantize_rgb_with_pillow(rgb_pixels, n_clusters):
+    """在缺少 scikit-learn 时，用 Pillow 做 RGB 量化兜底"""
+    if len(rgb_pixels) == 0:
+        return rgb_pixels
+
+    sample = rgb_pixels.astype(np.uint8).reshape(-1, 1, 3)
+    sample_img = Image.fromarray(sample, mode="RGB")
+    quantized = sample_img.quantize(
+        colors=max(1, int(n_clusters)),
+        method=_PIL_FASTOCTREE,
+    ).convert("RGB")
+    return np.array(quantized, dtype=np.uint8).reshape(-1, 3)
+
+
+def _quantize_rgb_pixels(rgb_pixels, n_clusters):
+    """优先 KMeans，失败时回退到 Pillow，保证插件可用性"""
+    rgb_pixels = rgb_pixels.astype(np.float64)
+    try:
+        from sklearn.cluster import KMeans
+
+        try:
+            kmeans = KMeans(n_clusters=n_clusters, random_state=0, n_init="auto")
+        except TypeError:
+            # 兼容旧版 scikit-learn（不支持 n_init="auto"）
+            kmeans = KMeans(n_clusters=n_clusters, random_state=0)
+
+        labels = kmeans.fit_predict(rgb_pixels)
+        quantized_rgb = kmeans.cluster_centers_[labels]
+        return np.clip(quantized_rgb, 0, 255).astype(np.uint8)
+    except Exception:
+        return _quantize_rgb_with_pillow(rgb_pixels, n_clusters)
+
+
 def quantize_colors(img_array, max_colors=16):
     """颜色量化"""
-    from sklearn.cluster import KMeans
-
     height, width = img_array.shape[:2]
     channels = img_array.shape[2] if len(img_array.shape) > 2 else 1
 
@@ -308,33 +338,16 @@ def quantize_colors(img_array, max_colors=16):
 
         # KMeans 聚类
         n_clusters = min(max_colors, len(rgb_to_quantize))
-        kmeans = KMeans(n_clusters=n_clusters, random_state=0, n_init="auto")
-        kmeans.fit(rgb_to_quantize)
-
-        # 获取聚类标签
-        labels = kmeans.predict(rgb_to_quantize)
-
-        # 用聚类中心替换颜色
-        quantized_rgb = kmeans.cluster_centers_[labels]
-        quantized_rgb = np.clip(quantized_rgb, 0, 255).astype(np.uint8)
+        quantized_rgb = _quantize_rgb_pixels(rgb_to_quantize, n_clusters)
 
         # 重建图像
         quantized_pixels = pixels.copy()
         quantized_pixels[mask, :3] = quantized_rgb
         quantized_image = quantized_pixels.reshape(height, width, channels)
     else:
-        # KMeans 聚类
-        pixels_float = pixels.astype(np.float64)
-        n_clusters = min(max_colors, len(pixels_float))
-        kmeans = KMeans(n_clusters=n_clusters, random_state=0, n_init="auto")
-        kmeans.fit(pixels_float)
-
-        # 获取聚类标签
-        labels = kmeans.predict(pixels_float)
-
-        # 用聚类中心替换颜色
-        quantized_pixels = kmeans.cluster_centers_[labels]
-        quantized_pixels = np.clip(quantized_pixels, 0, 255).astype(np.uint8)
+        n_clusters = min(max_colors, len(pixels))
+        quantized_rgb = _quantize_rgb_pixels(pixels[:, :3], n_clusters)
+        quantized_pixels = quantized_rgb.astype(np.uint8)
         quantized_image = quantized_pixels.reshape(height, width, channels)
 
     return quantized_image
@@ -348,23 +361,18 @@ def apply_pixel_outline(img_array, outline_color=(0, 0, 0)):
         return img_array
 
     result = img_array.copy()
-    for y in range(height):
-        for x in range(width):
-            if img_array[y, x, 3] > 0:  # 如果是实体像素
-                # 检查四周是否有透明像素
-                is_edge = False
-                if y == 0 or y == height - 1 or x == 0 or x == width - 1:
-                    is_edge = True
-                else:
-                    if (
-                        img_array[y - 1, x, 3] == 0
-                        or img_array[y + 1, x, 3] == 0
-                        or img_array[y, x - 1, 3] == 0
-                        or img_array[y, x + 1, 3] == 0
-                    ):
-                        is_edge = True
-                if is_edge:
-                    result[y, x, :3] = outline_color
+    alpha_mask = img_array[:, :, 3] > 0
+    if not np.any(alpha_mask):
+        return result
+
+    padded = np.pad(alpha_mask, 1, mode="constant", constant_values=False)
+    up = padded[:-2, 1:-1]
+    down = padded[2:, 1:-1]
+    left = padded[1:-1, :-2]
+    right = padded[1:-1, 2:]
+
+    edge_mask = alpha_mask & ((~up) | (~down) | (~left) | (~right))
+    result[edge_mask, :3] = np.array(outline_color, dtype=np.uint8)
     return result
 
 
@@ -381,13 +389,15 @@ def close_outline_gaps(img_array):
     alpha_mask = result[:, :, 3] > 0
 
     # 只在透明边缘附近进行补线，避免把角色内部深色区域误补成黑色
-    edge_mask = np.zeros((height, width), dtype=bool)
-    for y in range(1, height - 1):
-        for x in range(1, width - 1):
-            if not alpha_mask[y, x]:
-                continue
-            if not np.all(alpha_mask[y - 1 : y + 2, x - 1 : x + 2]):
-                edge_mask[y, x] = True
+    padded_alpha = np.pad(alpha_mask, 1, mode="constant", constant_values=False)
+    all_neighbors_opaque = np.ones((height, width), dtype=bool)
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            all_neighbors_opaque &= padded_alpha[
+                1 + dy : 1 + dy + height, 1 + dx : 1 + dx + width
+            ]
+
+    edge_mask = alpha_mask & (~all_neighbors_opaque)
 
     # 黑线判定阈值（收紧阈值，减少额外黑像素）
     black_mask = (rgb[:, :, 0] < 22) & (rgb[:, :, 1] < 22) & (rgb[:, :, 2] < 22)
@@ -728,17 +738,22 @@ class PIXELART_OT_one_click_process(Operator):
         self.report({"INFO"}, "步骤 1/4: 批量渲染...")
 
         # 保存原始设置
+        original_frame = scene.frame_current
         original_filepath = scene.render.filepath
+        original_resolution_x = scene.render.resolution_x
+        original_resolution_y = scene.render.resolution_y
         original_filter_size = scene.render.filter_size
         original_film_transparent = scene.render.film_transparent
+        original_file_format = scene.render.image_settings.file_format
+        original_color_mode = scene.render.image_settings.color_mode
 
         # 尝试保存 Eevee 采样设置 (Blender 4.2 Eevee-Next)
-        original_eevee_samples = None
-        try:
-            if hasattr(scene, "eevee") and hasattr(scene.eevee, "taa_render_samples"):
-                original_eevee_samples = scene.eevee.taa_render_samples
-        except:
-            pass
+        eevee_settings = getattr(scene, "eevee", None)
+        original_eevee_samples = (
+            eevee_settings.taa_render_samples
+            if eevee_settings and hasattr(eevee_settings, "taa_render_samples")
+            else None
+        )
 
         # 应用渲染设置
         scene.render.resolution_x = settings.render_resolution_x
@@ -748,13 +763,8 @@ class PIXELART_OT_one_click_process(Operator):
             scene.render.filter_size = 0.0
             # 【杀手锏】强制将 Eevee 渲染采样设为 1。
             # 这是 Blender 产生边缘黑灰色杂边的罪魁祸首！(多采样会导致边缘像素和透明底进行混合)
-            try:
-                if hasattr(scene, "eevee") and hasattr(
-                    scene.eevee, "taa_render_samples"
-                ):
-                    scene.eevee.taa_render_samples = 1
-            except:
-                pass
+            if eevee_settings and original_eevee_samples is not None:
+                eevee_settings.taa_render_samples = 1
         else:
             scene.render.filter_size = 1.5
 
@@ -766,20 +776,26 @@ class PIXELART_OT_one_click_process(Operator):
 
         # 批量渲染
         frame_count = scene.frame_end - scene.frame_start + 1
-        for frame in range(scene.frame_start, scene.frame_end + 1):
-            scene.frame_set(frame)
-            scene.render.filepath = os.path.join(TEMP_DIR, f"frame_{frame:04d}")
-            bpy.ops.render.render(write_still=True)
-
-        # 恢复原始设置
-        scene.render.filepath = original_filepath
-        scene.render.filter_size = original_filter_size
-        scene.render.film_transparent = original_film_transparent
         try:
-            if original_eevee_samples is not None and hasattr(scene, "eevee"):
-                scene.eevee.taa_render_samples = original_eevee_samples
-        except:
-            pass
+            for frame in range(scene.frame_start, scene.frame_end + 1):
+                scene.frame_set(frame)
+                scene.render.filepath = os.path.join(TEMP_DIR, f"frame_{frame:04d}")
+                bpy.ops.render.render(write_still=True)
+        except Exception as err:
+            self.report({"ERROR"}, f"渲染失败: {err}")
+            return {"CANCELLED"}
+        finally:
+            # 恢复原始设置，避免污染用户场景
+            scene.frame_set(original_frame)
+            scene.render.filepath = original_filepath
+            scene.render.resolution_x = original_resolution_x
+            scene.render.resolution_y = original_resolution_y
+            scene.render.filter_size = original_filter_size
+            scene.render.film_transparent = original_film_transparent
+            scene.render.image_settings.file_format = original_file_format
+            scene.render.image_settings.color_mode = original_color_mode
+            if eevee_settings and original_eevee_samples is not None:
+                eevee_settings.taa_render_samples = original_eevee_samples
 
         self.report({"INFO"}, f"渲染完成: {frame_count} 帧")
 
@@ -787,23 +803,28 @@ class PIXELART_OT_one_click_process(Operator):
         self.report({"INFO"}, "步骤 2/4: 网格对齐...")
 
         png_files = sorted(glob.glob(os.path.join(TEMP_DIR, "frame_*.png")))
+        if not png_files:
+            self.report({"ERROR"}, "未找到渲染输出帧，请检查渲染设置")
+            return {"CANCELLED"}
+
         grid_size = settings.pixel_size
 
         for png_file in png_files:
-            img = Image.open(png_file)
+            with Image.open(png_file) as img:
+                # 【重要修复】废弃容易导致发光点丢失的 Mode Filter 数组运算！
+                # 采用原生 NEAREST 重采样，可以绝对保护极亮像素和线条，并真正实现等比例网格化！
+                width, height = img.size
+                new_w = width // grid_size
+                new_h = height // grid_size
 
-            # 【重要修复】废弃容易导致发光点丢失的 Mode Filter 数组运算！
-            # 采用原生 NEAREST 重采样，可以绝对保护极亮像素和线条，并真正实现等比例网格化！
-            width, height = img.size
-            new_w = width // grid_size
-            new_h = height // grid_size
-
-            if new_w > 0 and new_h > 0:
-                # 先缩小，再放大，实现完美的马赛克网格，不损失任何特征像素！
-                # PIL.Image.NEAREST 等价于 0，是最原生的像素暴力采样
-                small_img = img.resize((new_w, new_h), resample=0)
-                pixelated_img = small_img.resize((width, height), resample=0)
-                pixelated_img.save(png_file)
+                if new_w > 0 and new_h > 0:
+                    # 先缩小，再放大，实现完美的马赛克网格，不损失任何特征像素！
+                    # PIL.Image.NEAREST 等价于 0，是最原生的像素暴力采样
+                    small_img = img.resize((new_w, new_h), resample=_PIL_NEAREST)
+                    pixelated_img = small_img.resize(
+                        (width, height), resample=_PIL_NEAREST
+                    )
+                    pixelated_img.save(png_file)
 
         self.report({"INFO"}, f"网格对齐完成: {len(png_files)} 张")
 
@@ -811,8 +832,8 @@ class PIXELART_OT_one_click_process(Operator):
         self.report({"INFO"}, "步骤 3/4: 移除抗锯齿...")
 
         for png_file in png_files:
-            img = Image.open(png_file)
-            img_array = np.array(img)
+            with Image.open(png_file) as img:
+                img_array = np.array(img)
 
             # 移除抗锯齿
             aa_removed = remove_antialiasing(
@@ -830,8 +851,8 @@ class PIXELART_OT_one_click_process(Operator):
 
         max_colors = settings.max_colors
         for png_file in png_files:
-            img = Image.open(png_file)
-            img_array = np.array(img)
+            with Image.open(png_file) as img:
+                img_array = np.array(img)
 
             # 亮度托底：温和提亮，避免整体发灰发暗
             clamped = clamp_minimum_brightness(img_array, min_luminance=36)
@@ -849,8 +870,8 @@ class PIXELART_OT_one_click_process(Operator):
         if settings.enable_outline:
             self.report({"INFO"}, "步骤 4.5/5: 边框补线...")
             for png_file in png_files:
-                img = Image.open(png_file)
-                img_array = np.array(img)
+                with Image.open(png_file) as img:
+                    img_array = np.array(img)
                 closed = close_outline_gaps(img_array)
                 Image.fromarray(closed).save(png_file)
 
@@ -858,8 +879,8 @@ class PIXELART_OT_one_click_process(Operator):
         if settings.enable_outline:
             self.report({"INFO"}, "步骤 5/5: 生成外描边...")
             for png_file in png_files:
-                img = Image.open(png_file)
-                img_array = np.array(img)
+                with Image.open(png_file) as img:
+                    img_array = np.array(img)
                 outlined = apply_pixel_outline(img_array)
                 Image.fromarray(outlined).save(png_file)
 

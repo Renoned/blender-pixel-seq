@@ -73,7 +73,7 @@ def load_settings():
         try:
             with open(file_path, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except:
+        except Exception:
             pass
     return {}
 
@@ -82,7 +82,7 @@ def save_settings(settings_dict):
     try:
         with open(get_settings_file(), "w", encoding="utf-8") as f:
             json.dump(settings_dict, f, indent=4)
-    except:
+    except Exception:
         pass
 
 
@@ -292,7 +292,7 @@ def register():
                     settings.max_colors = saved["max_colors"]
                 if "enable_outline" in saved:
                     settings.enable_outline = saved["enable_outline"]
-            except:
+            except Exception:
                 pass
         return None
 
