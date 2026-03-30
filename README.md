@@ -2,6 +2,8 @@
 
 一个用于创建死亡细胞风格像素艺术的 Blender 插件，支持批量渲染、像素化处理和噪点修复。
 
+English version: `README_EN.md`
+
 ## 功能特性
 
 - 🎨 **死亡细胞风格渲染** - 低分辨率 + 无抗锯齿 + Cell Shading
