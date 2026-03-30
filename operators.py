@@ -734,6 +734,18 @@ class PIXELART_OT_one_click_process(Operator):
         # 创建临时目录
         os.makedirs(TEMP_DIR, exist_ok=True)
 
+        # 清理旧帧，避免把上一次（甚至别的 .blend）的残留帧一起导出
+        stale_frames = glob.glob(os.path.join(TEMP_DIR, "frame_*.png"))
+        removed_count = 0
+        for stale_file in stale_frames:
+            try:
+                os.remove(stale_file)
+                removed_count += 1
+            except Exception:
+                pass
+        if removed_count > 0:
+            self.report({"INFO"}, f"已清理旧缓存帧: {removed_count} 张")
+
         # ========== 步骤 1: 批量渲染到临时目录 ==========
         self.report({"INFO"}, "步骤 1/4: 批量渲染...")
 
@@ -901,7 +913,7 @@ class PIXELART_OT_preview_result(Operator):
             self.report({"WARNING"}, "请先执行「一键处理」")
             return {"CANCELLED"}
 
-        png_files = sorted(glob.glob(os.path.join(TEMP_DIR, "*.png")))
+        png_files = sorted(glob.glob(os.path.join(TEMP_DIR, "frame_*.png")))
         if not png_files:
             self.report({"WARNING"}, "请先执行「一键处理」")
             return {"CANCELLED"}
@@ -950,7 +962,7 @@ class PIXELART_OT_export_images(Operator):
             self.report({"WARNING"}, "请先执行「一键处理」")
             return {"CANCELLED"}
 
-        png_files = sorted(glob.glob(os.path.join(TEMP_DIR, "*.png")))
+        png_files = sorted(glob.glob(os.path.join(TEMP_DIR, "frame_*.png")))
         if not png_files:
             self.report({"WARNING"}, "请先执行「一键处理」")
             return {"CANCELLED"}
